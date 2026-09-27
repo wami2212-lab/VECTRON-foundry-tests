@@ -1127,6 +1127,34 @@ function getRescueStatus() external view returns (
     );
 }
 
+// Returns current ETH rescue status so investors can monitor on-chain
+function getETHRescueStatus() external view returns (
+    bool pending,
+    uint256 amount,
+    uint256 executeAfter
+) {
+    return (
+        ethRescuePending,
+        ethRescueRequestAmount,
+        ethRescuePending ? ethRescueRequestTime + 48 hours : 0
+    );
+}
+
+// Returns current ERC20 rescue status so investors can monitor on-chain
+function getERC20RescueStatus() external view returns (
+    bool pending,
+    address token,
+    uint256 amount,
+    uint256 executeAfter
+) {
+    return (
+        erc20RescuePending,
+        erc20RescueToken,
+        erc20RescueAmount,
+        erc20RescuePending ? erc20RescueRequestTime + 48 hours : 0
+    );
+}
+
 
     // This button will show you how many stakes a user has
     function getStakeCount(address account) external view returns (uint256) {

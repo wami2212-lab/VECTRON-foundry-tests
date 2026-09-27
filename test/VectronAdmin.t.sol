@@ -354,4 +354,24 @@ contract VectronAdminTest is Test {
         vm.expectRevert();
         token.executeERC20Rescue();
     }
+
+        function test_GetRescueStatusViewsReportPendingState() public {
+        vm.deal(address(token), 5 ether);
+        token.initiateETHRescue(2 ether);
+
+        (bool ethPending, uint256 ethAmount, uint256 ethExecuteAfter) = token.getETHRescueStatus();
+        assertTrue(ethPending);
+        assertEq(ethAmount, 2 ether);
+        assertEq(ethExecuteAfter, block.timestamp + 48 hours);
+
+        FakeLPToken randomToken = new FakeLPToken();
+        randomToken.mint(address(token), 500 ether);
+        token.initiateERC20Rescue(address(randomToken), 500 ether);
+
+        (bool ercPending, address ercToken, uint256 ercAmount, uint256 ercExecuteAfter) = token.getERC20RescueStatus();
+        assertTrue(ercPending);
+        assertEq(ercToken, address(randomToken));
+        assertEq(ercAmount, 500 ether);
+        assertEq(ercExecuteAfter, block.timestamp + 48 hours);
+    }
 }
