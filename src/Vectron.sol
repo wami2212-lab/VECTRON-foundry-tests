@@ -800,7 +800,8 @@ function rescueETH() external onlyOwner nonReentrant {
         require(tokenAddress != address(0), "Invalid token address");
         
         // 🔒 ANTI-RUG GUARD: Prevents the owner from ever touching staking/vesting tokens
-        require(tokenAddress != address(this), "Cannot rescue native project tokens");
+                require(tokenAddress != address(this), "Cannot rescue native project tokens");
+        require(tokenAddress != lpToken, "Cannot rescue locked LP tokens");
 
         uint256 contractBalance = IERC20(tokenAddress).balanceOf(address(this));
         if (amount > contractBalance) {

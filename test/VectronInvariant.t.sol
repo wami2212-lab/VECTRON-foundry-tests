@@ -3,10 +3,14 @@ pragma solidity ^0.8.19;
 
 import {Test} from "forge-std/Test.sol";
 import {VECTRON} from "../src/Vectron.sol";
+import {MockRouter} from "./mocks/MockRouter.sol";
+import {MockPair} from "./mocks/MockPair.sol";
+import {MaliciousReentrant} from "./mocks/MaliciousReentrant.sol";
 
 contract Handler is Test {
     VECTRON public token;
     address public pair;
+    MockPair public mockPair;
     address[] public actors;
 
     bool public stakeFailed;
@@ -15,9 +19,10 @@ contract Handler is Test {
     bool public claimFailed;
     bool public sellFailed;
 
-    constructor(VECTRON _token, address _pair, address[] memory _actors) {
+    constructor(VECTRON _token, address _pair, MockPair _mockPair, address[] memory _actors) {
         token = _token;
         pair = _pair;
+        mockPair = _mockPair;
         actors = _actors;
     }
 
@@ -79,28 +84,69 @@ contract Handler is Test {
     function passTime(uint256 s) external {
         vm.warp(block.timestamp + bound(s, 1, 30 days));
     }
+
+    // Keeps the TWAP oracle alive by advancing time and nudging reserves,
+    // simulating the price accrual a real pair does automatically on every
+    // swap. Wiggle is kept small so the TWAP-vs-spot divergence check
+    // usually still passes and auto-liquidity actually gets exercised.
+    function touchMarket(uint256 timeSeed, uint256 wiggleSeed) external {
+        vm.warp(block.timestamp + bound(timeSeed, 31 minutes, 3 days));
+        (uint112 r0, uint112 r1, ) = mockPair.getReserves();
+        int256 wiggleBps = int256(bound(wiggleSeed, 0, 1000)) - 500; // ±5%
+        uint112 newR1 = uint112(uint256(int256(uint256(r1)) + (int256(uint256(r1)) * wiggleBps) / 10000));
+        if (newR1 == 0) newR1 = r1;
+        mockPair.setReserves(r0, newR1);
+    }
 }
 
 contract VectronInvariant is Test {
     VECTRON token;
     Handler handler;
-    address constant PAIR = address(0xBEEF);
-    address constant ROUTER = address(0xCAFE);
+    MockRouter router;
+    MockPair pair;
+    MaliciousReentrant attacker;
+
     address constant TEAM = address(0x7EA1);
     address constant TREASURY = address(0x7EA5);
+    address constant WETH = address(0xBEEF0000);
     address[] actors;
 
     function setUp() public {
-        token = new VECTRON(ROUTER, TEAM, TREASURY);
-        token.setExchangePair(PAIR, true);
+        router = new MockRouter(WETH);
+        token = new VECTRON(address(router), TEAM, TREASURY);
+
+        pair = new MockPair(address(token), WETH, 75_000_000 ether, 60 ether);
+
+        token.setExchangePair(address(pair), true);
+        token.setTwapPair(address(pair));
+        token.setMinTokensBeforeLiquidity(500_000 ether);
         token.startSystem();
+
+        vm.deal(address(router), 1000 ether);
+        router.setRate(1e13);
+
+        attacker = new MaliciousReentrant(address(token), address(pair), 0);
+        router.setReenterTarget(address(attacker));
+
         for (uint256 i = 0; i < 3; i++) {
             address actor = address(uint160(0xA000 + i));
             actors.push(actor);
             token.transfer(actor, 10_000_000 ether);
         }
-        token.transfer(PAIR, 50_000_000 ether);
-        handler = new Handler(token, PAIR, actors);
+        token.transfer(address(pair), 50_000_000 ether);
+        token.transfer(address(attacker), 2_000_000 ether);
+        attacker.setReenterAmount(100_000 ether);
+
+        // Bootstrap the TWAP so auto-liquidity isn't dead on arrival.
+        pair.setReserves(75_000_000 ether, 60 ether);
+        vm.prank(actors[0]);
+        token.transfer(address(pair), 1 ether);
+        vm.warp(block.timestamp + 31 minutes);
+        pair.setReserves(74_000_000 ether, 61 ether);
+        vm.prank(actors[0]);
+        token.transfer(address(pair), 1 ether);
+
+        handler = new Handler(token, address(pair), pair, actors);
         targetContract(address(handler));
     }
 
@@ -135,7 +181,8 @@ contract VectronInvariant is Test {
 
     function invariant_supplyConserved() public view {
         uint256 sum = token.balanceOf(address(this)) + token.balanceOf(address(token))
-            + token.balanceOf(TEAM) + token.balanceOf(TREASURY) + token.balanceOf(PAIR);
+            + token.balanceOf(TEAM) + token.balanceOf(TREASURY) + token.balanceOf(address(pair))
+            + token.balanceOf(address(router)) + token.balanceOf(address(attacker));
         for (uint256 i = 0; i < actors.length; i++) {
             sum += token.balanceOf(actors[i]);
         }
@@ -148,5 +195,14 @@ contract VectronInvariant is Test {
         assertFalse(handler.exitFailed(), "emergencyExit reverted");
         assertFalse(handler.claimFailed(), "claim reverted");
         assertFalse(handler.sellFailed(), "sell reverted");
+    }
+
+    // The whole point of wiring the real mock router in: every single
+    // auto-liquidity swap the fuzzer triggers along the way gets a live
+    // reentrancy attempt from `attacker` fired mid-swap. If this ever
+    // fails, the inSwap gate broke under real, randomized, concurrent
+    // contract activity — not just the isolated one-shot scenario.
+    function invariant_reentrancyNeverSucceedsMidSwap() public view {
+        assertLe(router.maxDepthSeen(), 1, "swap function was reentered - inSwap gate failed under load");
     }
 }
