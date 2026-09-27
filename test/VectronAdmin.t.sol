@@ -207,39 +207,151 @@ contract VectronAdminTest is Test {
     // This is the test that catches the actual bug: rescueERC20 must never
     // be able to move the locked LP token, at any amount, at any time,
     // regardless of the 150-day lock state.
-    function test_RescueERC20CannotTouchLockedLPToken() public {
+        function test_RescueERC20CannotTouchLockedLPToken() public {
         lp.mint(address(token), 1000 ether);
         token.lockLiquidity(address(lp));
 
         vm.expectRevert("Cannot rescue locked LP tokens");
-        token.rescueERC20(address(lp), 1000 ether);
+        token.initiateERC20Rescue(address(lp), 1000 ether);
 
         // Still blocked even after the lock period has technically expired -
         // the LP token should only ever leave via withdrawLP(), never rescueERC20.
         vm.warp(block.timestamp + 150 days);
         vm.expectRevert("Cannot rescue locked LP tokens");
-        token.rescueERC20(address(lp), 1000 ether);
+        token.initiateERC20Rescue(address(lp), 1000 ether);
     }
 
-    function testFuzz_RescueERC20CannotTouchLPTokenAnyAmount(uint256 amount) public {
+        function testFuzz_RescueERC20CannotTouchLPTokenAnyAmount(uint256 amount) public {
         amount = bound(amount, 1, 1_000_000 ether);
         lp.mint(address(token), amount);
         token.lockLiquidity(address(lp));
 
         vm.expectRevert("Cannot rescue locked LP tokens");
-        token.rescueERC20(address(lp), amount);
+        token.initiateERC20Rescue(address(lp), amount);
     }
 
-    function test_RescueERC20StillWorksForUnrelatedTokens() public {
+        function test_RescueERC20StillWorksForUnrelatedTokens() public {
         FakeLPToken randomToken = new FakeLPToken();
         randomToken.mint(address(token), 500 ether);
 
-        token.rescueERC20(address(randomToken), 500 ether);
+        token.initiateERC20Rescue(address(randomToken), 500 ether);
+        vm.warp(block.timestamp + 48 hours);
+        token.executeERC20Rescue();
         assertEq(randomToken.balanceOf(TREASURY), 500 ether);
     }
 
-    function test_RescueERC20StillBlocksNativeToken() public {
+        function test_RescueERC20StillBlocksNativeToken() public {
         vm.expectRevert("Cannot rescue native project tokens");
-        token.rescueERC20(address(token), 1 ether);
+        token.initiateERC20Rescue(address(token), 1 ether);
+    }
+
+
+        /* ---------------- ETH rescue timelock (new) ---------------- */
+
+    function test_ETHRescueBlockedBeforeTimelockExpires() public {
+        vm.deal(address(token), 5 ether);
+        token.initiateETHRescue(2 ether);
+
+        vm.expectRevert("Timelock not expired yet");
+        token.executeETHRescue();
+
+        vm.warp(block.timestamp + 47 hours);
+        vm.expectRevert("Timelock not expired yet");
+        token.executeETHRescue();
+    }
+
+    function test_ETHRescueSucceedsAfterTimelock() public {
+        vm.deal(address(token), 5 ether);
+        token.initiateETHRescue(2 ether);
+        vm.warp(block.timestamp + 48 hours);
+
+        uint256 before = TREASURY.balance;
+        token.executeETHRescue();
+        assertEq(TREASURY.balance, before + 2 ether);
+        assertFalse(token.ethRescuePending());
+    }
+
+    function test_ETHRescueCancelClearsState() public {
+        vm.deal(address(token), 5 ether);
+        token.initiateETHRescue(2 ether);
+        token.cancelETHRescue();
+
+        assertFalse(token.ethRescuePending());
+        assertEq(token.ethRescueRequestAmount(), 0);
+    }
+
+    function test_StrangerCannotInitiateOrExecuteETHRescue() public {
+        vm.deal(address(token), 5 ether);
+        vm.prank(stranger);
+        vm.expectRevert();
+        token.initiateETHRescue(1 ether);
+
+        token.initiateETHRescue(1 ether);
+        vm.warp(block.timestamp + 48 hours);
+        vm.prank(stranger);
+        vm.expectRevert();
+        token.executeETHRescue();
+    }
+
+    function testFuzz_ETHRescueNeverExceedsRequestedAmount(uint256 funded, uint256 requested) public {
+        funded = bound(funded, 1, 1000 ether);
+        requested = bound(requested, 1, funded);
+        vm.deal(address(token), funded);
+
+        token.initiateETHRescue(requested);
+        vm.warp(block.timestamp + 48 hours);
+
+        uint256 before = TREASURY.balance;
+        token.executeETHRescue();
+        assertEq(TREASURY.balance, before + requested);
+    }
+
+    /* ---------------- ERC20 rescue timelock (new) ---------------- */
+
+    function test_ERC20RescueBlockedBeforeTimelockExpires() public {
+        FakeLPToken randomToken = new FakeLPToken();
+        randomToken.mint(address(token), 500 ether);
+        token.initiateERC20Rescue(address(randomToken), 500 ether);
+
+        vm.expectRevert("Timelock not expired yet");
+        token.executeERC20Rescue();
+    }
+
+    function test_ERC20RescueCancelClearsState() public {
+        FakeLPToken randomToken = new FakeLPToken();
+        randomToken.mint(address(token), 500 ether);
+        token.initiateERC20Rescue(address(randomToken), 500 ether);
+        token.cancelERC20Rescue();
+
+        assertFalse(token.erc20RescuePending());
+        assertEq(token.erc20RescueAmount(), 0);
+    }
+
+    function test_ERC20RescueStillBlocksLPTokenEvenIfLockedDuringDelay() public {
+        // Requested before the LP even exists, but the guard must still catch it
+        // at execute time if lockLiquidity() happens during the 48h delay.
+        lp.mint(address(token), 1000 ether);
+        token.initiateERC20Rescue(address(lp), 1000 ether);
+
+        token.lockLiquidity(address(lp));
+        vm.warp(block.timestamp + 48 hours);
+
+        vm.expectRevert("Cannot rescue locked LP tokens");
+        token.executeERC20Rescue();
+    }
+
+    function test_StrangerCannotInitiateOrExecuteERC20Rescue() public {
+        FakeLPToken randomToken = new FakeLPToken();
+        randomToken.mint(address(token), 500 ether);
+
+        vm.prank(stranger);
+        vm.expectRevert();
+        token.initiateERC20Rescue(address(randomToken), 500 ether);
+
+        token.initiateERC20Rescue(address(randomToken), 500 ether);
+        vm.warp(block.timestamp + 48 hours);
+        vm.prank(stranger);
+        vm.expectRevert();
+        token.executeERC20Rescue();
     }
 }

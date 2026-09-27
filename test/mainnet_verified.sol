@@ -69,18 +69,9 @@ contract VECTRON is ReentrancyGuard {
     uint256 public startTime;
     bool private inSwap;
     bool public paused;
-        uint256 public rescueRequestTime;
+    uint256 public rescueRequestTime;
     uint256 public rescueRequestAmount;
     bool public rescuePending;
-
-    bool public ethRescuePending;
-    uint256 public ethRescueRequestTime;
-    uint256 public ethRescueRequestAmount;
-
-    bool public erc20RescuePending;
-    uint256 public erc20RescueRequestTime;
-    address public erc20RescueToken;
-    uint256 public erc20RescueAmount;
 
     // Fees
     uint256 public treasuryTaxBPS = 50;   // 0.5% for stakers
@@ -166,15 +157,9 @@ contract VECTRON is ReentrancyGuard {
     event AllocationFulfilled(string allocationType, address indexed account, uint256 amount, uint256 timestamp);
     event SystemStarted(uint256 startTime);
     event PauseStatusChanged(bool isPaused);
-        event RescueRequested(uint256 amount, uint256 executeAfter);
+    event RescueRequested(uint256 amount, uint256 executeAfter);
     event RescueExecuted(uint256 amount);
     event RescueCancelled();
-    event ETHRescueRequested(uint256 amount, uint256 executeAfter);
-    event ETHRescueExecuted(uint256 amount);
-    event ETHRescueCancelled();
-    event ERC20RescueRequested(address indexed token, uint256 amount, uint256 executeAfter);
-    event ERC20RescueExecuted(address indexed token, uint256 amount);
-    event ERC20RescueCancelled();
     event ExchangePairStatusUpdated(address indexed pair, bool isPair);
     event FeesUpdated(uint256 treasuryTax, uint256 liquidityTax, uint256 unstakeFee);
     event StakeIndexShifted(address indexed user, uint256 oldIndex, uint256 newIndex);
@@ -572,6 +557,40 @@ function emergencyExit(uint256 index) external nonReentrant {
    function _transfer(address from, address to, uint256 amount) internal {
     require(to != address(0), "Transfer to zero address");
     require(balanceOf[from] >= amount, "Inadequate balance");
+            // Auto-liquidity runs BEFORE the sender's tokens move, so the pair is in a clean
+        // state when the contract's own swap and liquidity add execute.
+        if (
+            !inSwap &&
+            isExchangePair[to] &&
+            !isExchangePair[from] &&
+            !isExcludedFromFee[from] &&
+            !isExcludedFromFee[to] &&
+            from != address(this) &&
+            to != address(this) &&
+            liquidityTokensCollected >= minTokensBeforeLiquidity &&
+            _isTwapReady()
+        ) {
+            uint256 currentBalance = balanceOf[address(this)];
+            uint256 totalLiabilities = totalTokensStaked + vestingPoolSize + totalRewardsAvailable;
+
+            uint256 freeContractBalance = 0;
+            if (currentBalance > totalLiabilities) {
+                freeContractBalance = currentBalance - totalLiabilities;
+            }
+
+            uint256 tokensToSwap = liquidityTokensCollected;
+            if (tokensToSwap > freeContractBalance) {
+                tokensToSwap = freeContractBalance;
+            }
+
+            if (tokensToSwap >= minTokensBeforeLiquidity) {
+                try this._autoAddLiquidity(tokensToSwap) {
+                    liquidityTokensCollected -= tokensToSwap;
+                } catch {
+                    // Failed this round; tokens stay queued and retry on the next sell.
+                }
+            }
+        }
     uint256 tax = 0;
     uint256 stakerToTreasury = 0; // Tracks tokens diverted directly to treasury if no stakers exist
 
@@ -619,32 +638,7 @@ function emergencyExit(uint256 index) external nonReentrant {
         }
     }
 
-    // 🟢 Auto-liquidity trigger AFTER balances are updated — reads correct contract balance
-    if (tax > 0 && !inSwap && !isExchangePair[from] && liquidityTokensCollected >= minTokensBeforeLiquidity && _isTwapReady()) {
-        uint256 currentBalance = balanceOf[address(this)];
-        uint256 totalLiabilities = totalTokensStaked + vestingPoolSize + totalRewardsAvailable;
-
-        uint256 freeContractBalance = 0;
-        if (currentBalance > totalLiabilities) {
-            freeContractBalance = currentBalance - totalLiabilities;
-        }
-
-        uint256 tokensToSwap = liquidityTokensCollected;
-        if (tokensToSwap > freeContractBalance) {
-            tokensToSwap = freeContractBalance;
-        }
-
-        if (tokensToSwap >= minTokensBeforeLiquidity) {
-            try this._autoAddLiquidity(tokensToSwap) {
-                liquidityTokensCollected -= tokensToSwap;
-            } catch {
-                // Swap or liquidity-add failed this round (slippage, pool state, etc).
-                // Tokens stay queued in liquidityTokensCollected and get retried on the
-                // next taxed transfer that crosses the threshold — the user's own
-                // transfer must still succeed regardless.
-            }
-        }
-    }
+    
 
     // --- INTERACTIONS: EMIT ALL EVENTS AFTER STATE WRITES ---
     if (tax > 0) {
@@ -803,103 +797,31 @@ function cancelRescue() external onlyOwner {
     emit RescueCancelled();
 }
 
-
-
-// --- ETH rescue: same 48h public timelock as the native-token rescue above ---
-function initiateETHRescue(uint256 amount) external onlyOwner {
-    require(!ethRescuePending, "ETH rescue already pending");
-    require(amount > 0, "Amount must be greater than 0");
-    require(amount <= address(this).balance, "Exceeds ETH balance");
-
-    ethRescueRequestTime = block.timestamp;
-    ethRescueRequestAmount = amount;
-    ethRescuePending = true;
-
-    emit ETHRescueRequested(amount, block.timestamp + 48 hours);
-}
-
-function executeETHRescue() external onlyOwner nonReentrant {
-    require(ethRescuePending, "No ETH rescue pending");
-    require(block.timestamp >= ethRescueRequestTime + 48 hours, "Timelock not expired yet");
-
-    uint256 amount = ethRescueRequestAmount;
-    if (amount > address(this).balance) {
-        amount = address(this).balance;
-    }
-    require(amount > 0, "No ETH to rescue");
-
-    ethRescuePending = false;
-    ethRescueRequestAmount = 0;
-    ethRescueRequestTime = 0;
-
-    (bool success, ) = payable(treasuryWallet).call{value: amount}("");
+function rescueETH() external onlyOwner nonReentrant {
+    uint256 balance = address(this).balance;
+    require(balance > 0, "No ETH to rescue");
+    (bool success, ) = payable(treasuryWallet).call{value: balance}("");
     require(success, "ETH transfer failed");
-
-    emit ETHRescueExecuted(amount);
 }
 
-function cancelETHRescue() external onlyOwner {
-    require(ethRescuePending, "No ETH rescue pending");
-    ethRescuePending = false;
-    ethRescueRequestAmount = 0;
-    ethRescueRequestTime = 0;
-    emit ETHRescueCancelled();
-}
+// 🟢 FIXED: Recovers accidentally sent external ERC-20 tokens safely
+    function rescueERC20(address tokenAddress, uint256 amount) external onlyOwner nonReentrant {
+        require(tokenAddress != address(0), "Invalid token address");
+        
+        // 🔒 ANTI-RUG GUARD: Prevents the owner from ever touching staking/vesting tokens
+        require(tokenAddress != address(this), "Cannot rescue native project tokens");
+                require(tokenAddress != lpToken, "Cannot rescue LP tokens");
 
-// --- ERC20 rescue: same 48h public timelock, plus the existing anti-rug guards ---
-function initiateERC20Rescue(address tokenAddress, uint256 amount) external onlyOwner {
-    require(!erc20RescuePending, "ERC20 rescue already pending");
-    require(tokenAddress != address(0), "Invalid token address");
-    require(tokenAddress != address(this), "Cannot rescue native project tokens");
-    require(tokenAddress != lpToken, "Cannot rescue locked LP tokens");
-    require(amount > 0, "Amount must be greater than 0");
-
-    uint256 contractBalance = IERC20(tokenAddress).balanceOf(address(this));
-    require(amount <= contractBalance, "Exceeds token balance");
-
-    erc20RescueToken = tokenAddress;
-    erc20RescueAmount = amount;
-    erc20RescueRequestTime = block.timestamp;
-    erc20RescuePending = true;
-
-    emit ERC20RescueRequested(tokenAddress, amount, block.timestamp + 48 hours);
-}
-
-function executeERC20Rescue() external onlyOwner nonReentrant {
-    require(erc20RescuePending, "No ERC20 rescue pending");
-    require(block.timestamp >= erc20RescueRequestTime + 48 hours, "Timelock not expired yet");
-
-    address tokenAddress = erc20RescueToken;
-    // Re-check the anti-rug guards at execute time too, in case lpToken was set during the delay.
-    require(tokenAddress != address(this), "Cannot rescue native project tokens");
-    require(tokenAddress != lpToken, "Cannot rescue locked LP tokens");
-
-    uint256 amount = erc20RescueAmount;
-    uint256 contractBalance = IERC20(tokenAddress).balanceOf(address(this));
-    if (amount > contractBalance) {
-        amount = contractBalance;
+        uint256 contractBalance = IERC20(tokenAddress).balanceOf(address(this));
+        if (amount > contractBalance) {
+            amount = contractBalance;
+        }
+        
+        // Sent securely to the treasury wallet using the correct state variable layout
+        bool success = IERC20(tokenAddress).transfer(treasuryWallet, amount);
+        require(success, "ERC20 transfer failed");
     }
-    require(amount > 0, "Nothing to rescue");
 
-    erc20RescuePending = false;
-    erc20RescueAmount = 0;
-    erc20RescueRequestTime = 0;
-    erc20RescueToken = address(0);
-
-    bool success = IERC20(tokenAddress).transfer(treasuryWallet, amount);
-    require(success, "ERC20 transfer failed");
-
-    emit ERC20RescueExecuted(tokenAddress, amount);
-}
-
-function cancelERC20Rescue() external onlyOwner {
-    require(erc20RescuePending, "No ERC20 rescue pending");
-    erc20RescuePending = false;
-    erc20RescueAmount = 0;
-    erc20RescueRequestTime = 0;
-    erc20RescueToken = address(0);
-    emit ERC20RescueCancelled();
-}
 // 🟢 FIXED: Allows updating the liquidity trigger threshold if price or volume changes
     function setMinTokensBeforeLiquidity(uint256 newMinTokens) external onlyOwner {
         require(newMinTokens > 0, "Threshold must be greater than 0");
