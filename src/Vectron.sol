@@ -572,6 +572,39 @@ function emergencyExit(uint256 index) external nonReentrant {
    function _transfer(address from, address to, uint256 amount) internal {
     require(to != address(0), "Transfer to zero address");
     require(balanceOf[from] >= amount, "Inadequate balance");
+
+    // Auto-liquidity runs FIRST, before this transfer's tokens reach the pair.
+    // Running it after the balance update made the router count the seller's
+    // pending tokens as its own swap input and broke the seller's own swap.
+    if (
+        !inSwap &&
+        isExchangePair[to] && !isExchangePair[from] &&
+        !isExcludedFromFee[from] && !isExcludedFromFee[to] &&
+        from != address(this) && to != address(this) &&
+        liquidityTokensCollected >= minTokensBeforeLiquidity &&
+        _isTwapReady()
+    ) {
+        uint256 currentBalance = balanceOf[address(this)];
+        uint256 totalLiabilities = totalTokensStaked + vestingPoolSize + totalRewardsAvailable;
+
+        uint256 freeContractBalance = 0;
+        if (currentBalance > totalLiabilities) {
+            freeContractBalance = currentBalance - totalLiabilities;
+        }
+
+        uint256 tokensToSwap = liquidityTokensCollected;
+        if (tokensToSwap > freeContractBalance) {
+            tokensToSwap = freeContractBalance;
+        }
+
+        if (tokensToSwap >= minTokensBeforeLiquidity) {
+            try this._autoAddLiquidity(tokensToSwap) {
+                liquidityTokensCollected -= tokensToSwap;
+            } catch {
+                // Swap or liquidity-add failed this round; tokens stay queued and retry later.
+            }
+        }
+    }
     uint256 tax = 0;
     uint256 stakerToTreasury = 0; // Tracks tokens diverted directly to treasury if no stakers exist
 
@@ -619,32 +652,6 @@ function emergencyExit(uint256 index) external nonReentrant {
         }
     }
 
-    // 🟢 Auto-liquidity trigger AFTER balances are updated — reads correct contract balance
-    if (tax > 0 && !inSwap && !isExchangePair[from] && liquidityTokensCollected >= minTokensBeforeLiquidity && _isTwapReady()) {
-        uint256 currentBalance = balanceOf[address(this)];
-        uint256 totalLiabilities = totalTokensStaked + vestingPoolSize + totalRewardsAvailable;
-
-        uint256 freeContractBalance = 0;
-        if (currentBalance > totalLiabilities) {
-            freeContractBalance = currentBalance - totalLiabilities;
-        }
-
-        uint256 tokensToSwap = liquidityTokensCollected;
-        if (tokensToSwap > freeContractBalance) {
-            tokensToSwap = freeContractBalance;
-        }
-
-        if (tokensToSwap >= minTokensBeforeLiquidity) {
-            try this._autoAddLiquidity(tokensToSwap) {
-                liquidityTokensCollected -= tokensToSwap;
-            } catch {
-                // Swap or liquidity-add failed this round (slippage, pool state, etc).
-                // Tokens stay queued in liquidityTokensCollected and get retried on the
-                // next taxed transfer that crosses the threshold — the user's own
-                // transfer must still succeed regardless.
-            }
-        }
-    }
 
     // --- INTERACTIONS: EMIT ALL EVENTS AFTER STATE WRITES ---
     if (tax > 0) {
