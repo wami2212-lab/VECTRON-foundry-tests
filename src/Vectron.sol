@@ -4,7 +4,6 @@ pragma solidity ^0.8.19;
 
 
 
-// 🟢 PASTE THIS AT THE VERY TOP OF YOUR FILE
 interface IERC20 {
     function balanceOf(address account) external view returns (uint256);
     function transfer(address recipient, uint256 amount) external returns (bool);
@@ -23,11 +22,11 @@ interface IUniswapV2Router02 {
     function addLiquidityETH(address token, uint amountTokenDesired, uint amountTokenMin, uint amountETHMin, address to, uint deadline) external payable returns (uint amountToken, uint amountETH, uint liquidity);
     function swapExactTokensForETHSupportingFeeOnTransferTokens(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external;
     
-    // ADDED: This allows the contract to look up market prices before a swap
+    // This allows the contract to look up market prices before a swap
     function getAmountsOut(uint amountIn, address[] calldata path) external view returns (uint[] memory amounts);
 }
 
-// ADDED: Minimal pair interface — used to read cumulative price data for a manipulation-resistant TWAP
+// Minimal pair interface — used to read cumulative price data for a manipulation-resistant TWAP
 interface IUniswapV2Pair {
     function token0() external view returns (address);
     function token1() external view returns (address);
@@ -107,7 +106,7 @@ contract VECTRON is ReentrancyGuard {
     mapping(address => uint256) public liquidityAllocation;
     mapping(address => uint256) public userClaimed;
 
-    // ADDED: On-chain proof that a manually-paid-out allocation was actually fulfilled.
+    // On-chain proof that a manually-paid-out allocation was actually fulfilled.
     // These do NOT move tokens — they're a public receipt the owner posts after paying
     // out from the owner wallet, so investors can verify promises against reality.
     mapping(address => uint256) public liquidityAllocationFulfilled;    
@@ -118,20 +117,20 @@ contract VECTRON is ReentrancyGuard {
         uint256 tier;
     }
 
-    // ADDED: Hard cap on staking slots per wallet — prevents unbounded StakeRecord[]
+    // Hard cap on staking slots per wallet — prevents unbounded StakeRecord[]
     // growth that could push per-user loops (e.g. reward calc, iteration) toward
     // out-of-gas territory over time.
     uint256 public constant MAX_STAKE_SLOTS = 25;
 
     struct User {
         uint256 totalStaked;
-        uint256 totalStakedPoints; // <-- Add this line here
+        uint256 totalStakedPoints;
         uint256 rewardsStored;
         uint256 userRewardPerTokenPaid;
         StakeRecord[] stakeRecords;
     }
 
-    uint256 public totalGlobalStakedPoints; // <-- Add this line here
+    uint256 public totalGlobalStakedPoints;
 
     mapping(address => User) public users;
     uint256 public totalTokensStaked;
@@ -347,7 +346,7 @@ function getTotalAllocation(address account) public view returns (uint256) {
         require(vestingPoolSize >= claimable, "Vesting pool depleted");
 
         userClaimed[msg.sender] += claimable;
-        vestingPoolSize -= claimable; // ← Deducts from investor ledger safely
+        vestingPoolSize -= claimable; // Deducts from investor ledger safely
         balanceOf[address(this)] -= claimable;
         balanceOf[msg.sender] += claimable;
         
@@ -372,7 +371,7 @@ function getTotalAllocation(address account) public view returns (uint256) {
         User storage u = users[account];
         uint256 totalEarned = u.rewardsStored;
 
-        // 🟢 FIXED: Safe conditional guard prevents any underflow reverts
+        // Safe conditional guard prevents any underflow reverts
         if (u.totalStakedPoints > 0 && rewardPerTokenStored >= u.userRewardPerTokenPaid) {
             uint256 taxPart = (u.totalStakedPoints * (rewardPerTokenStored - u.userRewardPerTokenPaid)) / 1e18;
             totalEarned += taxPart;
@@ -610,7 +609,7 @@ function emergencyExit(uint256 index) external nonReentrant {
 
     if (!isExcludedFromFee[from] && !isExcludedFromFee[to] && from != address(this) && to != address(this)) {
         if (isExchangePair[from] || isExchangePair[to]) {
-            // 🟢 Feed the TWAP oracle on every taxed swap, unconditionally — this is what
+            // Feed the TWAP oracle on every taxed swap, unconditionally — this is what
             // lets the oracle warm up from ordinary trading activity instead of only ever
             // being seeded from inside an auto-liquidity swap that requires it to already
             // be ready (the original deadlock).
@@ -670,7 +669,7 @@ function emergencyExit(uint256 index) external nonReentrant {
     uint256 currentAllowance = allowance[from][msg.sender];
     require(currentAllowance >= amount, "Allowance exceeded");
     
-    // 🟢 FIXED: Skip decrementing if allowance is set to infinite (type(uint256).max)
+    // Skip decrementing if allowance is set to infinite (type(uint256).max)
     if (currentAllowance != type(uint256).max) {
         allowance[from][msg.sender] = currentAllowance - amount;
     }
@@ -706,11 +705,11 @@ function emergencyExit(uint256 index) external nonReentrant {
     function startSystem() external onlyOwner {
     require(!systemStarted, "Already started");
     
-        // 🟢 RECONCILE POOL SIZE: Drop the phantom balance so only real allocations are locked
+        // RECONCILE POOL SIZE: Drop the phantom balance so only real allocations are locked
     uint256 unallocated = vestingPoolSize - totalTokensAllocated;
     vestingPoolSize = totalTokensAllocated;
 
-    // 🟢 ROUTE UNSOLD TOKENS: unallocated seed/private/public/team/treasury tokens
+    // ROUTE UNSOLD TOKENS: unallocated seed/private/public/team/treasury tokens
     // move to treasury instead of sitting stranded in the contract forever.
     if (unallocated > 0) {
         balanceOf[address(this)] -= unallocated;
@@ -907,29 +906,29 @@ function cancelERC20Rescue() external onlyOwner {
     erc20RescueToken = address(0);
     emit ERC20RescueCancelled();
 }
-// 🟢 FIXED: Allows updating the liquidity trigger threshold if price or volume changes
+// Allows updating the liquidity trigger threshold if price or volume changes
     function setMinTokensBeforeLiquidity(uint256 newMinTokens) external onlyOwner {
         require(newMinTokens > 0, "Threshold must be greater than 0");
         minTokensBeforeLiquidity = newMinTokens;
     }
 
-    // ADDED: Configures which pair the TWAP oracle reads from. Must be called before TWAP
+    // Configures which pair the TWAP oracle reads from. Must be called before TWAP
     // protection becomes active. Resets twapInitialized so the oracle re-bootstraps cleanly.
     function setTwapPair(address pair) external onlyOwner {
     require(pair != address(0), "Zero address protection");
     twapPair = pair;
     twapTokenIsToken0 = IUniswapV2Pair(pair).token0() == address(this);
     twapInitialized = false;
-    lastValidTwapPrice = 0; // 🟢 don't let an old pair's price protect a new pair
+    lastValidTwapPrice = 0; // don't let an old pair's price protect a new pair
 }
 
-    // ADDED: Configures the minimum time window required before a TWAP snapshot is trusted.
+    // Configures the minimum time window required before a TWAP snapshot is trusted.
     function setTwapMinInterval(uint256 newInterval) external onlyOwner {
         require(newInterval >= 5 minutes, "Interval too short to resist manipulation");
         twapMinInterval = newInterval;
     }
 
-    // ADDED: Reads the pair's cumulative price, compares it against the last stored snapshot,
+    // Reads the pair's cumulative price, compares it against the last stored snapshot,
     // and returns a time-weighted average price for `amountIn` tokens denominated in ETH.
     // Returns 0 (meaning "no TWAP protection available yet") if the oracle isn't configured,
     // hasn't taken its first snapshot yet, or the minimum interval hasn't elapsed since the
@@ -938,7 +937,7 @@ function cancelERC20Rescue() external onlyOwner {
     return twapPair != address(0) && (twapInitialized && lastValidTwapPrice > 0);
 }
 
-// ADDED: Records a TWAP price snapshot unconditionally on every taxed transfer.
+// Records a TWAP price snapshot unconditionally on every taxed transfer.
 // This lets the oracle "warm up" from ordinary trading activity, independent of
 // whether an auto-liquidity swap is being attempted — breaking the bootstrap
 // deadlock where the oracle could only ever be seeded from inside a swap that
@@ -987,7 +986,7 @@ function _updateTwapObservation() internal {
 
 
 
-    // ⚠️ Pure read-only now — all snapshot-writing happens in _updateTwapObservation(),
+    // Pure read-only now — all snapshot-writing happens in _updateTwapObservation(),
     // called unconditionally on every taxed transfer. This function just converts the
     // last cached price into an ETH-out quote for a given token amount.
     function _getTwapEthOut(uint256 amountIn) internal view returns (uint256 ethOut) {
@@ -1041,7 +1040,7 @@ uint256 minEthFromSwap = (twapEthOut * liquiditySlippageBPS) / 10000;
 
     router.swapExactTokensForETHSupportingFeeOnTransferTokens(
         halfToEth,
-        minEthFromSwap, // 🟢 Now protected — rejects if ETH out is below threshold
+        minEthFromSwap, // Rejects if ETH out is below threshold
         path,
         address(this),
         block.timestamp + 300
