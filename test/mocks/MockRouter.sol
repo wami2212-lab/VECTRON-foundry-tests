@@ -34,8 +34,18 @@ contract MockRouter {
         reenterTarget = target;
     }
 
-    function factory() external pure returns (address) {
-        return address(0x1234);
+        address public mockPair;
+
+    function setPair(address p) external {
+        mockPair = p;
+    }
+
+    function factory() external view returns (address) {
+        return address(this);
+    }
+
+    function getPair(address, address) external view returns (address) {
+        return mockPair;
     }
 
     function WETH() external view returns (address) {

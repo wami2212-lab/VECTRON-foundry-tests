@@ -35,6 +35,10 @@ interface IUniswapV2Pair {
     function price1CumulativeLast() external view returns (uint256);
 }
 
+interface IUniswapV2Factory {
+    function getPair(address tokenA, address tokenB) external view returns (address pair);
+}
+
 abstract contract ReentrancyGuard {
     uint256 private _status;
     constructor() { _status = 1; }
@@ -858,6 +862,7 @@ function initiateERC20Rescue(address tokenAddress, uint256 amount) external only
     require(tokenAddress != address(0), "Invalid token address");
     require(tokenAddress != address(this), "Cannot rescue native project tokens");
     require(tokenAddress != lpToken, "Cannot rescue locked LP tokens");
+    require(tokenAddress != _nativePair(), "Cannot rescue LP tokens");
     require(amount > 0, "Amount must be greater than 0");
 
     uint256 contractBalance = IERC20(tokenAddress).balanceOf(address(this));
@@ -879,6 +884,7 @@ function executeERC20Rescue() external onlyOwner nonReentrant {
     // Re-check the anti-rug guards at execute time too, in case lpToken was set during the delay.
     require(tokenAddress != address(this), "Cannot rescue native project tokens");
     require(tokenAddress != lpToken, "Cannot rescue locked LP tokens");
+    require(tokenAddress != _nativePair(), "Cannot rescue LP tokens");
 
     uint256 amount = erc20RescueAmount;
     uint256 contractBalance = IERC20(tokenAddress).balanceOf(address(this));
@@ -1073,9 +1079,17 @@ address public lpToken;
     event LPLocked(address indexed lpToken, uint256 amount, uint256 unlockTime);
     event LPWithdrawn(uint256 amount);
 
+    // The only LP token that counts is the real pair for this token, derived from the
+    // immutable router's factory, so the owner cannot re-point it.
+    function _nativePair() internal view returns (address) {
+        return IUniswapV2Factory(router.factory()).getPair(address(this), router.WETH());
+    }
+
     function lockLiquidity(address _lpToken) external onlyOwner {
         require(!lpLocked, "Already locked");
         require(_lpToken != address(0), "Zero address");
+        require(lpToken == address(0), "LP lock is one-time only");
+        require(_lpToken == _nativePair(), "Not the native LP pair");
 
         uint256 balance = IERC20(_lpToken).balanceOf(address(this));
         require(balance > 0, "No LP tokens to lock");

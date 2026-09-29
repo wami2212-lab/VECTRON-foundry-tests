@@ -39,6 +39,7 @@ contract VectronAdminTest is Test {
         token = new VECTRON(address(router), TEAM, TREASURY);
           token.startSystem();
         lp = new FakeLPToken();
+                router.setPair(address(lp));
     }
 
     /* ---------------- Two-step ownership ---------------- */
@@ -327,17 +328,12 @@ contract VectronAdminTest is Test {
         assertEq(token.erc20RescueAmount(), 0);
     }
 
-    function test_ERC20RescueStillBlocksLPTokenEvenIfLockedDuringDelay() public {
-        // Requested before the LP even exists, but the guard must still catch it
-        // at execute time if lockLiquidity() happens during the 48h delay.
+        function test_ERC20RescueOfLPTokenBlockedFromTheStart() public {
+        // The real pair is now protected by construction (derived from the router's
+        // factory), so an LP rescue is refused at initiate time, not only at execute time.
         lp.mint(address(token), 1000 ether);
+        vm.expectRevert("Cannot rescue LP tokens");
         token.initiateERC20Rescue(address(lp), 1000 ether);
-
-        token.lockLiquidity(address(lp));
-        vm.warp(block.timestamp + 48 hours);
-
-        vm.expectRevert("Cannot rescue locked LP tokens");
-        token.executeERC20Rescue();
     }
 
     function test_StrangerCannotInitiateOrExecuteERC20Rescue() public {

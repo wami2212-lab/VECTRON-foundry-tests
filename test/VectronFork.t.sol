@@ -19,6 +19,7 @@ interface IPancakeFactoryFork {
 interface IPancakePairFork {
     function sync() external;
     function balanceOf(address who) external view returns (uint256);
+        function transfer(address to, uint256 amount) external returns (bool);
 }
 
 contract VectronForkTest is Test {
@@ -90,5 +91,18 @@ contract VectronForkTest is Test {
         assertGt(seller.balance, bnbBefore, "seller was not paid BNB");
         assertGt(IPancakePairFork(pair).balanceOf(address(token)), lpBefore, "auto-liquidity did not add LP");
         assertLt(token.liquidityTokensCollected(), queueBefore, "queue was not consumed");
+    }
+
+        function test_LockLiquidityAcceptsRealPairOnRealFactory() public {
+        uint256 lpBal = IPancakePairFork(pair).balanceOf(address(this));
+        assertGt(lpBal, 0, "test contract should hold the seeded LP");
+        IPancakePairFork(pair).transfer(address(token), lpBal);
+
+        vm.expectRevert("Not the native LP pair");
+        token.lockLiquidity(wbnb); // any other token must be refused
+
+        token.lockLiquidity(pair); // the real pair from the real factory must be accepted
+        assertEq(token.lpToken(), pair);
+        assertTrue(token.lpLocked());
     }
 }
