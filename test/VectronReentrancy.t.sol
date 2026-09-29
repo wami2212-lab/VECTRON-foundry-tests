@@ -57,6 +57,9 @@ contract VectronReentrancyTest is Test {
 
         _warmUpTwap();
 
+                vm.prank(seller);
+        token.transfer(address(pair), 250_000 ether); // fills the auto-liquidity queue so the fuzzed sell below triggers the swap
+
         token.transfer(address(attacker), reenterAmount);
         attacker.setReenterAmount(reenterAmount);
 
