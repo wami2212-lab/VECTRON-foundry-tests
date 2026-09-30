@@ -95,6 +95,24 @@ contract VectronForkTest is Test {
     
     }
 
+        function test_EmergencyExitOneHourGate() public {
+        vm.startPrank(seller);
+        token.stake(1, 1000 ether);
+        vm.expectRevert(bytes4(keccak256("ExitTooSoon()")));
+        token.emergencyExit(0);          // same block: must be refused
+        vm.warp(block.timestamp + 1 hours);
+        token.emergencyExit(0);          // after one hour: allowed
+        vm.stopPrank();
+    }
+
+    function test_EmergencyExitWorksImmediatelyWhenPaused() public {
+        vm.prank(seller);
+        token.stake(2, 1000 ether);
+        token.setPaused(true);           // this test contract is the owner
+        vm.prank(seller);
+        token.emergencyExit(0);          // paused: no gate, users are never trapped
+    }
+
     function test_SmallSellTriggersAutoLiquidityOnRealRouter() public {
         _sell(200_000 ether); // starts the oracle, fills the queue
 

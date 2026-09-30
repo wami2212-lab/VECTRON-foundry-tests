@@ -72,6 +72,7 @@ error UnstakeFeeExceedsMaximumCapOf3();
 error VestingPoolDepleted();
 error ZeroAddress();
 error ZeroAddressProtection();
+error ExitTooSoon();
 
 interface IERC20 {
     function balanceOf(address account) external view returns (uint256);
@@ -489,6 +490,10 @@ function emergencyExit(uint256 index) external nonReentrant {
     StakeRecord storage record = u.stakeRecords[index];
     uint256 amount = record.amount;
     if (!(amount > 0)) revert SlotEmpty();
+        if (!paused) {
+        uint256 lockLen = record.tier == 1 ? 15 days : record.tier == 2 ? 45 days : 90 days;
+        if (block.timestamp < record.lockEnd - lockLen + 1 hours) revert ExitTooSoon();
+    }
 
     // 1. Calculate weighted points for this specific slot first
     uint256 multiplier = (record.tier == 1) ? 10000 : (record.tier == 2) ? 15000 : 20000;

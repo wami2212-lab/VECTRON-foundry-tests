@@ -18,6 +18,7 @@ contract Handler is Test {
     bool public exitFailed;
     bool public claimFailed;
     bool public sellFailed;
+        uint256 public exitsDone;
 
     constructor(VECTRON _token, address _pair, MockPair _mockPair, address[] memory _actors) {
         token = _token;
@@ -52,8 +53,11 @@ contract Handler is Test {
         uint256 n = token.getStakeCount(actor);
         if (n == 0) return;
         uint256 idx = bound(i, 0, n - 1);
+                (, uint256 lockEnd, uint256 tier) = token.getStakeDetails(actor, idx);
+        uint256 lockLen = tier == 1 ? 15 days : tier == 2 ? 45 days : 90 days;
+        if (!token.paused() && block.timestamp < lockEnd - lockLen + 1 hours) return; // gate: too young to exit
         vm.prank(actor);
-        try token.emergencyExit(idx) {} catch { exitFailed = true; }
+                try token.emergencyExit(idx) { exitsDone++; } catch { exitFailed = true; }
     }
 
     function claim(uint256 a) external {
@@ -187,6 +191,10 @@ contract VectronInvariant is Test {
             sum += token.balanceOf(actors[i]);
         }
         assertEq(sum, token.totalSupply());
+    }
+
+        function afterInvariant() public {
+        emit log_named_uint("emergency exits completed", handler.exitsDone());
     }
 
     function invariant_honestUsersNeverBlocked() public view {
