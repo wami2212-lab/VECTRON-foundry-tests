@@ -20,6 +20,8 @@ interface IPancakePairFork {
     function sync() external;
     function balanceOf(address who) external view returns (uint256);
         function transfer(address to, uint256 amount) external returns (bool);
+            function getReserves() external view returns (uint112, uint112, uint32);
+    function token0() external view returns (address);
 }
 
 contract VectronForkTest is Test {
@@ -71,6 +73,26 @@ contract VectronForkTest is Test {
         token.approve(PANCAKE_ROUTER, type(uint256).max);
         router.swapExactTokensForETHSupportingFeeOnTransferTokens(amount, 0, path, seller, block.timestamp + 1 hours);
         vm.stopPrank();
+        }
+
+            function test_TwapReadingAfterIdleGap() public {
+        // Pair sits untouched for 1 hour after LP creation, then two small sells 10 min apart.
+        vm.warp(block.timestamp + 1 hours);
+        _sell(10_000 ether);   // first observation (contract stores a snapshot)
+        vm.warp(block.timestamp + 10 minutes);
+        _sell(10_000 ether);   // second observation: this is where lastValidTwapPrice is computed
+
+        (uint112 r0, uint112 r1, ) = IPancakePairFork(pair).getReserves();
+        uint256 spot = token.twapTokenIsToken0()
+            ? (uint256(r1) << 112) / r0
+            : (uint256(r0) << 112) / r1;
+
+        emit log_named_uint("lastValidTwapPrice", token.lastValidTwapPrice());
+        emit log_named_uint("spot price (Q112)  ", spot);
+
+        // Constant-price scenario, so the TWAP should be within ~5% of spot.
+        assertApproxEqRel(token.lastValidTwapPrice(), spot, 0.05e18);
+    
     }
 
     function test_SmallSellTriggersAutoLiquidityOnRealRouter() public {

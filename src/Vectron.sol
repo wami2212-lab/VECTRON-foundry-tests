@@ -179,10 +179,6 @@ contract VECTRON is ReentrancyGuard {
     mapping(address => uint256) public liquidityAllocation;
     mapping(address => uint256) public userClaimed;
 
-    // On-chain proof that a manually-paid-out allocation was actually fulfilled.
-    // These do NOT move tokens — they're a public receipt the owner posts after paying
-    // out from the owner wallet, so investors can verify promises against reality.
-    mapping(address => uint256) public liquidityAllocationFulfilled;    
 
     struct StakeRecord {
         uint256 amount;
@@ -321,12 +317,6 @@ function setLiquidityAllocation(address account, uint256 amount) external onlyOw
 
 
 
-function markLiquidityAllocationFulfilled(uint256 amount) external onlyOwner {
-    if (!(amount > 0)) revert AmountMustBeGreaterThan0();
-    if (!(liquidityAllocationFulfilled[owner] + amount <= liquidityAllocation[owner])) revert ExceedsAllocatedLiquidityAmount();
-    liquidityAllocationFulfilled[owner] += amount;
-    emit AllocationFulfilled("liquidity", owner, amount, block.timestamp);
-}
 
 function setPrivateAllocation(address account, uint256 accountAmount) external onlyOwner {
     if (!(!systemStarted)) revert SystemAlreadyLive();
@@ -1014,15 +1004,28 @@ function cancelERC20Rescue() external onlyOwner {
 // whether an auto-liquidity swap is being attempted — breaking the bootstrap
 // deadlock where the oracle could only ever be seeded from inside a swap that
 // itself required the oracle to already be ready.
+
+function _currentCumulativePrice() internal view returns (uint256 cumulative) {
+    IUniswapV2Pair pair = IUniswapV2Pair(twapPair);
+    cumulative = twapTokenIsToken0 ? pair.price0CumulativeLast() : pair.price1CumulativeLast();
+    (uint112 r0, uint112 r1, uint32 tsLast) = pair.getReserves();
+    uint32 nowTs = uint32(block.timestamp % 2**32);
+    if (tsLast != nowTs && r0 != 0 && r1 != 0) {
+        uint32 dt;
+        unchecked { dt = nowTs - tsLast; }
+        uint256 priceNow = twapTokenIsToken0
+            ? (uint256(r1) << 112) / r0
+            : (uint256(r0) << 112) / r1;
+        unchecked { cumulative += priceNow * dt; }
+    }
+}
+
 function _updateTwapObservation() internal {
     if (twapPair == address(0)) {
         return;
     }
 
-    IUniswapV2Pair pair = IUniswapV2Pair(twapPair);
-    uint256 priceCumulative = twapTokenIsToken0
-        ? pair.price0CumulativeLast()
-        : pair.price1CumulativeLast();
+       uint256 priceCumulative = _currentCumulativePrice();
 
     uint32 blockTimestamp = uint32(block.timestamp % 2**32);
 
