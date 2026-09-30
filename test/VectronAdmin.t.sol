@@ -53,7 +53,7 @@ contract VectronAdminTest is Test {
     function test_StrangerCannotAcceptOwnership() public {
         token.transferOwnership(newOwnerCandidate);
         vm.prank(stranger);
-        vm.expectRevert("Not the pending owner");
+        vm.expectRevert(bytes4(keccak256("NotThePendingOwner()")));
         token.acceptOwnership();
     }
 
@@ -81,7 +81,7 @@ contract VectronAdminTest is Test {
         vm.assume(randomCaller != newOwnerCandidate);
         token.transferOwnership(newOwnerCandidate);
         vm.prank(randomCaller);
-        vm.expectRevert("Not the pending owner");
+        vm.expectRevert(bytes4(keccak256("NotThePendingOwner()")));
         token.acceptOwnership();
     }
 
@@ -107,11 +107,11 @@ contract VectronAdminTest is Test {
         _fundFreeBalance(1000 ether);
         token.initiateRescue(500 ether);
 
-        vm.expectRevert("Timelock not expired yet");
+        vm.expectRevert(bytes4(keccak256("TimelockNotExpiredYet()")));
         token.executeRescue();
 
         vm.warp(block.timestamp + 47 hours);
-        vm.expectRevert("Timelock not expired yet");
+        vm.expectRevert(bytes4(keccak256("TimelockNotExpiredYet()")));
         token.executeRescue();
     }
 
@@ -128,7 +128,7 @@ contract VectronAdminTest is Test {
 
     function test_RescueCannotExceedFreeBalance() public {
         _fundFreeBalance(100 ether);
-        vm.expectRevert("Exceeds safe unallocated balance");
+        vm.expectRevert(bytes4(keccak256("ExceedsSafeUnallocatedBalance()")));
         token.initiateRescue(200 ether);
     }
 
@@ -149,7 +149,7 @@ contract VectronAdminTest is Test {
     function test_CannotInitiateSecondRescueWhilePending() public {
         _fundFreeBalance(1000 ether);
         token.initiateRescue(500 ether);
-        vm.expectRevert("Rescue already pending");
+        vm.expectRevert(bytes4(keccak256("RescueAlreadyPending()")));
         token.initiateRescue(100 ether);
     }
 
@@ -179,7 +179,7 @@ contract VectronAdminTest is Test {
     /* ---------------- LP lock + rescueERC20 guard ---------------- */
 
     function test_LockLiquidityRequiresNonZeroBalance() public {
-        vm.expectRevert("No LP tokens to lock");
+        vm.expectRevert(bytes4(keccak256("NoLPTokensToLock()")));
         token.lockLiquidity(address(lp));
     }
 
@@ -187,11 +187,11 @@ contract VectronAdminTest is Test {
         lp.mint(address(token), 1000 ether);
         token.lockLiquidity(address(lp));
 
-        vm.expectRevert("Still locked");
+        vm.expectRevert(bytes4(keccak256("StillLocked()")));
         token.withdrawLP();
 
         vm.warp(block.timestamp + 149 days);
-        vm.expectRevert("Still locked");
+        vm.expectRevert(bytes4(keccak256("StillLocked()")));
         token.withdrawLP();
     }
 
@@ -212,13 +212,13 @@ contract VectronAdminTest is Test {
         lp.mint(address(token), 1000 ether);
         token.lockLiquidity(address(lp));
 
-        vm.expectRevert("Cannot rescue locked LP tokens");
+        vm.expectRevert(bytes4(keccak256("CannotRescueLockedLPTokens()")));
         token.initiateERC20Rescue(address(lp), 1000 ether);
 
         // Still blocked even after the lock period has technically expired -
         // the LP token should only ever leave via withdrawLP(), never rescueERC20.
         vm.warp(block.timestamp + 150 days);
-        vm.expectRevert("Cannot rescue locked LP tokens");
+        vm.expectRevert(bytes4(keccak256("CannotRescueLockedLPTokens()")));
         token.initiateERC20Rescue(address(lp), 1000 ether);
     }
 
@@ -227,7 +227,7 @@ contract VectronAdminTest is Test {
         lp.mint(address(token), amount);
         token.lockLiquidity(address(lp));
 
-        vm.expectRevert("Cannot rescue locked LP tokens");
+        vm.expectRevert(bytes4(keccak256("CannotRescueLockedLPTokens()")));
         token.initiateERC20Rescue(address(lp), amount);
     }
 
@@ -242,7 +242,7 @@ contract VectronAdminTest is Test {
     }
 
         function test_RescueERC20StillBlocksNativeToken() public {
-        vm.expectRevert("Cannot rescue native project tokens");
+        vm.expectRevert(bytes4(keccak256("CannotRescueNativeProjectTokens()")));
         token.initiateERC20Rescue(address(token), 1 ether);
     }
 
@@ -253,11 +253,11 @@ contract VectronAdminTest is Test {
         vm.deal(address(token), 5 ether);
         token.initiateETHRescue(2 ether);
 
-        vm.expectRevert("Timelock not expired yet");
+        vm.expectRevert(bytes4(keccak256("TimelockNotExpiredYet()")));
         token.executeETHRescue();
 
         vm.warp(block.timestamp + 47 hours);
-        vm.expectRevert("Timelock not expired yet");
+        vm.expectRevert(bytes4(keccak256("TimelockNotExpiredYet()")));
         token.executeETHRescue();
     }
 
@@ -314,7 +314,7 @@ contract VectronAdminTest is Test {
         randomToken.mint(address(token), 500 ether);
         token.initiateERC20Rescue(address(randomToken), 500 ether);
 
-        vm.expectRevert("Timelock not expired yet");
+        vm.expectRevert(bytes4(keccak256("TimelockNotExpiredYet()")));
         token.executeERC20Rescue();
     }
 
@@ -332,7 +332,7 @@ contract VectronAdminTest is Test {
         // The real pair is now protected by construction (derived from the router's
         // factory), so an LP rescue is refused at initiate time, not only at execute time.
         lp.mint(address(token), 1000 ether);
-        vm.expectRevert("Cannot rescue LP tokens");
+        vm.expectRevert(bytes4(keccak256("CannotRescueLPTokens()")));
         token.initiateERC20Rescue(address(lp), 1000 ether);
     }
 
@@ -351,23 +351,21 @@ contract VectronAdminTest is Test {
         token.executeERC20Rescue();
     }
 
-        function test_GetRescueStatusViewsReportPendingState() public {
+            function test_PendingRescueStateIsReadableFromPublicVariables() public {
         vm.deal(address(token), 5 ether);
         token.initiateETHRescue(2 ether);
 
-        (bool ethPending, uint256 ethAmount, uint256 ethExecuteAfter) = token.getETHRescueStatus();
-        assertTrue(ethPending);
-        assertEq(ethAmount, 2 ether);
-        assertEq(ethExecuteAfter, block.timestamp + 48 hours);
+        assertTrue(token.ethRescuePending());
+        assertEq(token.ethRescueRequestAmount(), 2 ether);
+        assertEq(token.ethRescueRequestTime(), block.timestamp);
 
         FakeLPToken randomToken = new FakeLPToken();
         randomToken.mint(address(token), 500 ether);
         token.initiateERC20Rescue(address(randomToken), 500 ether);
 
-        (bool ercPending, address ercToken, uint256 ercAmount, uint256 ercExecuteAfter) = token.getERC20RescueStatus();
-        assertTrue(ercPending);
-        assertEq(ercToken, address(randomToken));
-        assertEq(ercAmount, 500 ether);
-        assertEq(ercExecuteAfter, block.timestamp + 48 hours);
+        assertTrue(token.erc20RescuePending());
+        assertEq(token.erc20RescueToken(), address(randomToken));
+        assertEq(token.erc20RescueAmount(), 500 ether);
+        assertEq(token.erc20RescueRequestTime(), block.timestamp);
     }
 }

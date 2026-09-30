@@ -1,8 +1,77 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-
-
+error AllowanceExceeded();
+error AlreadyLocked();
+error AlreadyStarted();
+error AmountMustBeGreaterThan0();
+error AmountNoLongerSafeToRescue();
+error CannotRescueLPTokens();
+error CannotRescueLockedLPTokens();
+error CannotRescueNativeProjectTokens();
+error CannotStake0();
+error ERC20RescueAlreadyPending();
+error ERC20TransferFailed();
+error ETHRescueAlreadyPending();
+error ETHTransferFailed();
+error ExceedsAllocatedLiquidityAmount();
+error ExceedsETHBalance();
+error ExceedsMAXSUPPLY();
+error ExceedsOwnerPool();
+error ExceedsSafeUnallocatedBalance();
+error ExceedsTokenBalance();
+error ExceedsVestingPool();
+error InadequateBalance();
+error InadequateBalanceToBurn();
+error InadequateContractBalance();
+error InsufficientRewardPool();
+error InternalOnly();
+error IntervalTooShortToResistManipulation();
+error InvalidDivergenceBound();
+error InvalidSlotIndex();
+error InvalidTier();
+error InvalidTokenAddress();
+error LPLockIsOneTimeOnly();
+error LPTransferFailed();
+error LengthMismatch();
+error MintToZeroAddress();
+error NewOwnerCannotBeZeroAddress();
+error NoERC20RescuePending();
+error NoETHRescuePending();
+error NoETHToRescue();
+error NoLPTokensToLock();
+error NoLockActive();
+error NoRescuePending();
+error NoRewards();
+error NotLive();
+error NotOwner();
+error NotTheNativeLPPair();
+error NotThePendingOwner();
+error NothingToClaimYet();
+error NothingToRescue();
+error ReentrancyErr();
+error RescueAlreadyPending();
+error RouterCannotBeZeroAddress();
+error SlotEmpty();
+error SlotIsAlreadyEmpty();
+error SpotPriceUnavailable();
+error StakeSlotCapReached();
+error StillLocked();
+error SystemAlreadyLive();
+error SystemIsPaused();
+error TWAPNotReady();
+error TWAPSpotDivergenceTooHigh();
+error TeamWalletCannotBeZeroAddress();
+error ThresholdMustBeGreaterThan0();
+error TimelockNotExpiredYet();
+error TokensAreStillLocked();
+error TransferFeesExceedMaximumCapOf2();
+error TransferToZeroAddress();
+error TreasuryCannotBeZeroAddress();
+error UnstakeFeeExceedsMaximumCapOf3();
+error VestingPoolDepleted();
+error ZeroAddress();
+error ZeroAddressProtection();
 
 interface IERC20 {
     function balanceOf(address account) external view returns (uint256);
@@ -43,7 +112,7 @@ abstract contract ReentrancyGuard {
     uint256 private _status;
     constructor() { _status = 1; }
     modifier nonReentrant() {
-        require(_status != 2, "Reentrancy");
+        if (!(_status != 2)) revert ReentrancyErr();
         _status = 2;
         _;
         _status = 1;
@@ -157,7 +226,7 @@ contract VECTRON is ReentrancyGuard {
     uint256 public maxTwapDivergenceBPS = 2000; // 20% default — max allowed gap between TWAP and spot before auto-liquidity pauses
 
     function setMaxTwapDivergenceBPS(uint256 bps) external onlyOwner {
-        require(bps > 0 && bps <= 5000, "Invalid divergence bound");
+        if (!(bps > 0 && bps <= 5000)) revert InvalidDivergenceBound();
         maxTwapDivergenceBPS = bps;
     }
 
@@ -185,14 +254,14 @@ contract VECTRON is ReentrancyGuard {
     event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
-    modifier onlyOwner() { require(msg.sender == owner, "Not owner"); _; }
+    modifier onlyOwner() { if (!(msg.sender == owner)) revert NotOwner(); _; }
     modifier lockTheSwap { inSwap = true; _; inSwap = false; }
-    modifier whenNotPaused() { require(!paused, "System is paused"); _; }
+    modifier whenNotPaused() { if (!(!paused)) revert SystemIsPaused(); _; }
 
     constructor(address _router, address _teamWallet, address _treasury) {
-        require(_router != address(0), "Router cannot be zero address");
-        require(_teamWallet != address(0), "Team wallet cannot be zero address");
-        require(_treasury != address(0), "Treasury cannot be zero address");
+        if (!(_router != address(0))) revert RouterCannotBeZeroAddress();
+        if (!(_teamWallet != address(0))) revert TeamWalletCannotBeZeroAddress();
+        if (!(_treasury != address(0))) revert TreasuryCannotBeZeroAddress();
 
         owner = msg.sender;
         teamWallet = _teamWallet;
@@ -218,34 +287,34 @@ contract VECTRON is ReentrancyGuard {
     /* ================= 12-WEEK VESTING ENGINE ================= */
 
     function setSeedAllocation(address account, uint256 amount) external onlyOwner {
-    require(!systemStarted, "System already live");
-    require(account != address(0), "Zero address");
+    if (!(!systemStarted)) revert SystemAlreadyLive();
+    if (!(account != address(0))) revert ZeroAddress();
     totalTokensAllocated = totalTokensAllocated - seedAllocation[account] + amount;
-    require(totalTokensAllocated <= vestingPoolSize, "Exceeds vesting pool");
+    if (!(totalTokensAllocated <= vestingPoolSize)) revert ExceedsVestingPool();
     seedAllocation[account] = amount;
 }
 
 function setTeamAllocation(address account, uint256 amount) external onlyOwner {
-    require(!systemStarted, "System already live");
-    require(account != address(0), "Zero address");
+    if (!(!systemStarted)) revert SystemAlreadyLive();
+    if (!(account != address(0))) revert ZeroAddress();
     totalTokensAllocated = totalTokensAllocated - teamAllocation[account] + amount;
-    require(totalTokensAllocated <= vestingPoolSize, "Exceeds vesting pool");
+    if (!(totalTokensAllocated <= vestingPoolSize)) revert ExceedsVestingPool();
     teamAllocation[account] = amount;
 }
 
 function setTreasuryAllocation(address account, uint256 amount) external onlyOwner {
-    require(!systemStarted, "System already live");
-    require(account != address(0), "Zero address");
+    if (!(!systemStarted)) revert SystemAlreadyLive();
+    if (!(account != address(0))) revert ZeroAddress();
     totalTokensAllocated = totalTokensAllocated - treasuryAllocation[account] + amount;
-    require(totalTokensAllocated <= vestingPoolSize, "Exceeds vesting pool");
+    if (!(totalTokensAllocated <= vestingPoolSize)) revert ExceedsVestingPool();
     treasuryAllocation[account] = amount;
 }
 
 function setLiquidityAllocation(address account, uint256 amount) external onlyOwner {
-    require(!systemStarted, "System already live");
-    require(account != address(0), "Zero address");
+    if (!(!systemStarted)) revert SystemAlreadyLive();
+    if (!(account != address(0))) revert ZeroAddress();
     totalOwnerPoolAllocated = totalOwnerPoolAllocated - liquidityAllocation[account] + amount;
-    require(totalOwnerPoolAllocated <= OWNER_POOL_SIZE, "Exceeds owner pool");
+    if (!(totalOwnerPoolAllocated <= OWNER_POOL_SIZE)) revert ExceedsOwnerPool();
     liquidityAllocation[account] = amount;
 }
 
@@ -253,67 +322,64 @@ function setLiquidityAllocation(address account, uint256 amount) external onlyOw
 
 
 function markLiquidityAllocationFulfilled(uint256 amount) external onlyOwner {
-    require(amount > 0, "Amount must be greater than 0");
-    require(
-        liquidityAllocationFulfilled[owner] + amount <= liquidityAllocation[owner],
-        "Exceeds allocated liquidity amount"
-    );
+    if (!(amount > 0)) revert AmountMustBeGreaterThan0();
+    if (!(liquidityAllocationFulfilled[owner] + amount <= liquidityAllocation[owner])) revert ExceedsAllocatedLiquidityAmount();
     liquidityAllocationFulfilled[owner] += amount;
     emit AllocationFulfilled("liquidity", owner, amount, block.timestamp);
 }
 
 function setPrivateAllocation(address account, uint256 accountAmount) external onlyOwner {
-    require(!systemStarted, "System already live");
-    require(account != address(0), "Zero address");
+    if (!(!systemStarted)) revert SystemAlreadyLive();
+    if (!(account != address(0))) revert ZeroAddress();
     totalTokensAllocated = totalTokensAllocated - privateAllocation[account] + accountAmount;
-    require(totalTokensAllocated <= vestingPoolSize, "Exceeds vesting pool");
+    if (!(totalTokensAllocated <= vestingPoolSize)) revert ExceedsVestingPool();
     privateAllocation[account] = accountAmount;
 }
 
 function setPublicAllocation(address account, uint256 accountAmount) external onlyOwner {
-    require(!systemStarted, "System already live");
-    require(account != address(0), "Zero address");
+    if (!(!systemStarted)) revert SystemAlreadyLive();
+    if (!(account != address(0))) revert ZeroAddress();
     totalTokensAllocated = totalTokensAllocated - publicAllocation[account] + accountAmount;
-    require(totalTokensAllocated <= vestingPoolSize, "Exceeds vesting pool");
+    if (!(totalTokensAllocated <= vestingPoolSize)) revert ExceedsVestingPool();
     publicAllocation[account] = accountAmount;
 }
 
 function setSeedAllocationBatch(address[] calldata accounts, uint256[] calldata amounts) external onlyOwner {
-    require(!systemStarted, "System already live");
-    require(accounts.length == amounts.length, "Length mismatch");
+    if (!(!systemStarted)) revert SystemAlreadyLive();
+    if (!(accounts.length == amounts.length)) revert LengthMismatch();
     uint256 newTotal = totalTokensAllocated;
     for (uint256 i = 0; i < accounts.length; i++) {
-        require(accounts[i] != address(0), "Zero address");
+        if (!(accounts[i] != address(0))) revert ZeroAddress();
         newTotal = newTotal - seedAllocation[accounts[i]] + amounts[i];
         seedAllocation[accounts[i]] = amounts[i];
     }
-    require(newTotal <= vestingPoolSize, "Exceeds vesting pool");
+    if (!(newTotal <= vestingPoolSize)) revert ExceedsVestingPool();
     totalTokensAllocated = newTotal;
 }
 
 function setPrivateAllocationBatch(address[] calldata accounts, uint256[] calldata amounts) external onlyOwner {
-    require(!systemStarted, "System already live");
-    require(accounts.length == amounts.length, "Length mismatch");
+    if (!(!systemStarted)) revert SystemAlreadyLive();
+    if (!(accounts.length == amounts.length)) revert LengthMismatch();
     uint256 newTotal = totalTokensAllocated;
     for (uint256 i = 0; i < accounts.length; i++) {
-        require(accounts[i] != address(0), "Zero address");
+        if (!(accounts[i] != address(0))) revert ZeroAddress();
         newTotal = newTotal - privateAllocation[accounts[i]] + amounts[i];
         privateAllocation[accounts[i]] = amounts[i];
     }
-    require(newTotal <= vestingPoolSize, "Exceeds vesting pool");
+    if (!(newTotal <= vestingPoolSize)) revert ExceedsVestingPool();
     totalTokensAllocated = newTotal;
 }
 
 function setPublicAllocationBatch(address[] calldata accounts, uint256[] calldata amounts) external onlyOwner {
-    require(!systemStarted, "System already live");
-    require(accounts.length == amounts.length, "Length mismatch");
+    if (!(!systemStarted)) revert SystemAlreadyLive();
+    if (!(accounts.length == amounts.length)) revert LengthMismatch();
     uint256 newTotal = totalTokensAllocated;
     for (uint256 i = 0; i < accounts.length; i++) {
-        require(accounts[i] != address(0), "Zero address");
+        if (!(accounts[i] != address(0))) revert ZeroAddress();
         newTotal = newTotal - publicAllocation[accounts[i]] + amounts[i];
         publicAllocation[accounts[i]] = amounts[i];
     }
-    require(newTotal <= vestingPoolSize, "Exceeds vesting pool");
+    if (!(newTotal <= vestingPoolSize)) revert ExceedsVestingPool();
     totalTokensAllocated = newTotal;
 }
 
@@ -346,8 +412,8 @@ function getTotalAllocation(address account) public view returns (uint256) {
     function claimMyVestedTokens() external nonReentrant {
         uint256 totalVestedSoFar = getVestedAmount(msg.sender);
         uint256 claimable = totalVestedSoFar - userClaimed[msg.sender];
-        require(claimable > 0, "Nothing to claim yet");
-        require(vestingPoolSize >= claimable, "Vesting pool depleted");
+        if (!(claimable > 0)) revert NothingToClaimYet();
+        if (!(vestingPoolSize >= claimable)) revert VestingPoolDepleted();
 
         userClaimed[msg.sender] += claimable;
         vestingPoolSize -= claimable; // Deducts from investor ledger safely
@@ -385,15 +451,15 @@ function getTotalAllocation(address account) public view returns (uint256) {
     }
 
     function stake(uint256 tier, uint256 amount) external nonReentrant whenNotPaused {
-    require(systemStarted, "Not live");
-    require(tier >= 1 && tier <= 3, "Invalid tier");
-    require(amount > 0, "Cannot stake 0");
+    if (!(systemStarted)) revert NotLive();
+    if (!(tier >= 1 && tier <= 3)) revert InvalidTier();
+    if (!(amount > 0)) revert CannotStake0();
 
     User storage u = users[msg.sender];
-    require(u.stakeRecords.length < MAX_STAKE_SLOTS, "Stake slot cap reached");
+    if (!(u.stakeRecords.length < MAX_STAKE_SLOTS)) revert StakeSlotCapReached();
     _updateRewards(msg.sender);
     
-    require(balanceOf[msg.sender] >= amount, "Inadequate balance");
+    if (!(balanceOf[msg.sender] >= amount)) revert InadequateBalance();
     balanceOf[msg.sender] -= amount;
     balanceOf[address(this)] += amount;
     totalTokensStaked += amount;
@@ -429,10 +495,10 @@ function getTotalAllocation(address account) public view returns (uint256) {
  */
 function emergencyExit(uint256 index) external nonReentrant {
     User storage u = users[msg.sender];
-    require(index < u.stakeRecords.length, "Invalid slot index");
+    if (!(index < u.stakeRecords.length)) revert InvalidSlotIndex();
     StakeRecord storage record = u.stakeRecords[index];
     uint256 amount = record.amount;
-    require(amount > 0, "Slot empty");
+    if (!(amount > 0)) revert SlotEmpty();
 
     // 1. Calculate weighted points for this specific slot first
     uint256 multiplier = (record.tier == 1) ? 10000 : (record.tier == 2) ? 15000 : 20000;
@@ -506,17 +572,17 @@ function emergencyExit(uint256 index) external nonReentrant {
     function claim() external nonReentrant whenNotPaused {
     _updateRewards(msg.sender);
     uint256 reward = users[msg.sender].rewardsStored;
-    require(reward > 0, "No rewards");
+    if (!(reward > 0)) revert NoRewards();
 
     // Ledger firewall: reward payout can never exceed actual reward tokens collected
-    require(totalRewardsAvailable >= reward, "Insufficient reward pool");
+    if (!(totalRewardsAvailable >= reward)) revert InsufficientRewardPool();
     
     // Clear ledger balance first to maintain rock-solid security
     users[msg.sender].rewardsStored = 0;
     totalRewardsAvailable -= reward; // Debit the reward ledger
 
     // Move the physical tax tokens out of the contract pool and into the user's balance
-    require(balanceOf[address(this)] >= reward, "Inadequate contract balance");
+    if (!(balanceOf[address(this)] >= reward)) revert InadequateContractBalance();
     balanceOf[address(this)] -= reward;
     balanceOf[msg.sender] += reward;
 
@@ -525,12 +591,12 @@ function emergencyExit(uint256 index) external nonReentrant {
 
     function unstake(uint256 index) external nonReentrant whenNotPaused {
     User storage u = users[msg.sender];
-    require(index < u.stakeRecords.length, "Invalid slot index");
+    if (!(index < u.stakeRecords.length)) revert InvalidSlotIndex();
     
     StakeRecord storage record = u.stakeRecords[index];
     uint256 amount = record.amount;
-    require(amount > 0, "Slot is already empty");
-    require(block.timestamp >= record.lockEnd, "Tokens are still locked");
+    if (!(amount > 0)) revert SlotIsAlreadyEmpty();
+    if (!(block.timestamp >= record.lockEnd)) revert TokensAreStillLocked();
 
     _updateRewards(msg.sender);
 
@@ -573,8 +639,8 @@ function emergencyExit(uint256 index) external nonReentrant {
     /* ================= CORE TOKEN LOGIC ================= */
 
    function _transfer(address from, address to, uint256 amount) internal {
-    require(to != address(0), "Transfer to zero address");
-    require(balanceOf[from] >= amount, "Inadequate balance");
+    if (!(to != address(0))) revert TransferToZeroAddress();
+    if (!(balanceOf[from] >= amount)) revert InadequateBalance();
 
     // Auto-liquidity runs FIRST, before this transfer's tokens reach the pair.
     // Running it after the balance update made the router count the seller's
@@ -671,7 +737,7 @@ function emergencyExit(uint256 index) external nonReentrant {
 }
     function transferFrom(address from, address to, uint256 amount) external returns (bool) {
     uint256 currentAllowance = allowance[from][msg.sender];
-    require(currentAllowance >= amount, "Allowance exceeded");
+    if (!(currentAllowance >= amount)) revert AllowanceExceeded();
     
     // Skip decrementing if allowance is set to infinite (type(uint256).max)
     if (currentAllowance != type(uint256).max) {
@@ -688,7 +754,7 @@ function emergencyExit(uint256 index) external nonReentrant {
      * This makes the "Burned" counter on your dashboard go up.
      */
     function burn(uint256 amount) external {
-        require(balanceOf[msg.sender] >= amount, "Inadequate balance to burn");
+        if (!(balanceOf[msg.sender] >= amount)) revert InadequateBalanceToBurn();
         
         balanceOf[msg.sender] -= amount;
         totalSupply -= amount;
@@ -698,8 +764,8 @@ function emergencyExit(uint256 index) external nonReentrant {
     }
 
     function _mint(address to, uint256 amount) internal {
-    require(to != address(0), "Mint to zero address");
-    require(totalSupply + amount <= MAX_SUPPLY, "Exceeds MAX_SUPPLY"); // SAFE: Hard revert, no silent failures
+    if (!(to != address(0))) revert MintToZeroAddress();
+    if (!(totalSupply + amount <= MAX_SUPPLY)) revert ExceedsMAXSUPPLY(); // SAFE: Hard revert, no silent failures
 
     totalSupply += amount;
     balanceOf[to] += amount;
@@ -707,7 +773,7 @@ function emergencyExit(uint256 index) external nonReentrant {
 }
 
     function startSystem() external onlyOwner {
-    require(!systemStarted, "Already started");
+    if (!(!systemStarted)) revert AlreadyStarted();
     
         // RECONCILE POOL SIZE: Drop the phantom balance so only real allocations are locked
     uint256 unallocated = vestingPoolSize - totalTokensAllocated;
@@ -735,13 +801,13 @@ function emergencyExit(uint256 index) external nonReentrant {
 }
 
 function transferOwnership(address newOwner) external onlyOwner {
-        require(newOwner != address(0), "New owner cannot be zero address");
+        if (!(newOwner != address(0))) revert NewOwnerCannotBeZeroAddress();
         pendingOwner = newOwner;
         emit OwnershipTransferStarted(owner, newOwner);
     }
 
     function acceptOwnership() external {
-        require(msg.sender == pendingOwner, "Not the pending owner");
+        if (!(msg.sender == pendingOwner)) revert NotThePendingOwner();
         address previousOwner = owner;
         owner = pendingOwner;
         pendingOwner = address(0);
@@ -750,8 +816,8 @@ function transferOwnership(address newOwner) external onlyOwner {
 
 // Step 1: Owner announces rescue intention — starts 48hr countdown
 function initiateRescue(uint256 amount) external onlyOwner {
-    require(!rescuePending, "Rescue already pending");
-    require(amount > 0, "Amount must be greater than 0");
+    if (!(!rescuePending)) revert RescueAlreadyPending();
+    if (!(amount > 0)) revert AmountMustBeGreaterThan0();
     
     // Calculate locked liabilities (staking, vesting, rewards, AND tokens already queued for auto-liquidity)
 uint256 totalLiabilities = totalTokensStaked + vestingPoolSize + totalRewardsAvailable + liquidityTokensCollected;
@@ -762,7 +828,7 @@ uint256 totalLiabilities = totalTokensStaked + vestingPoolSize + totalRewardsAva
         freeContractBalance = currentBalance - totalLiabilities;
     }
     
-    require(amount <= freeContractBalance, "Exceeds safe unallocated balance");
+    if (!(amount <= freeContractBalance)) revert ExceedsSafeUnallocatedBalance();
     
     rescueRequestTime = block.timestamp;
     rescueRequestAmount = amount;
@@ -773,8 +839,8 @@ uint256 totalLiabilities = totalTokensStaked + vestingPoolSize + totalRewardsAva
 
 // Step 2: Owner executes rescue after 48hr delay
 function executeRescue() external onlyOwner {
-    require(rescuePending, "No rescue pending");
-    require(block.timestamp >= rescueRequestTime + 48 hours, "Timelock not expired yet");
+    if (!(rescuePending)) revert NoRescuePending();
+    if (!(block.timestamp >= rescueRequestTime + 48 hours)) revert TimelockNotExpiredYet();
     
     uint256 amount = rescueRequestAmount;
 
@@ -788,7 +854,7 @@ function executeRescue() external onlyOwner {
         freeContractBalance = currentBalance - totalLiabilities;
     }
 
-    require(amount <= freeContractBalance, "Amount no longer safe to rescue");
+    if (!(amount <= freeContractBalance)) revert AmountNoLongerSafeToRescue();
 
     // Reset state before transfer (CEI pattern)
     rescuePending = false;
@@ -804,7 +870,7 @@ function executeRescue() external onlyOwner {
 
 // Step 3: Owner can cancel a pending rescue at any time
 function cancelRescue() external onlyOwner {
-    require(rescuePending, "No rescue pending");
+    if (!(rescuePending)) revert NoRescuePending();
     
     rescuePending = false;
     rescueRequestAmount = 0;
@@ -817,9 +883,9 @@ function cancelRescue() external onlyOwner {
 
 // --- ETH rescue: same 48h public timelock as the native-token rescue above ---
 function initiateETHRescue(uint256 amount) external onlyOwner {
-    require(!ethRescuePending, "ETH rescue already pending");
-    require(amount > 0, "Amount must be greater than 0");
-    require(amount <= address(this).balance, "Exceeds ETH balance");
+    if (!(!ethRescuePending)) revert ETHRescueAlreadyPending();
+    if (!(amount > 0)) revert AmountMustBeGreaterThan0();
+    if (!(amount <= address(this).balance)) revert ExceedsETHBalance();
 
     ethRescueRequestTime = block.timestamp;
     ethRescueRequestAmount = amount;
@@ -829,27 +895,27 @@ function initiateETHRescue(uint256 amount) external onlyOwner {
 }
 
 function executeETHRescue() external onlyOwner nonReentrant {
-    require(ethRescuePending, "No ETH rescue pending");
-    require(block.timestamp >= ethRescueRequestTime + 48 hours, "Timelock not expired yet");
+    if (!(ethRescuePending)) revert NoETHRescuePending();
+    if (!(block.timestamp >= ethRescueRequestTime + 48 hours)) revert TimelockNotExpiredYet();
 
     uint256 amount = ethRescueRequestAmount;
     if (amount > address(this).balance) {
         amount = address(this).balance;
     }
-    require(amount > 0, "No ETH to rescue");
+    if (!(amount > 0)) revert NoETHToRescue();
 
     ethRescuePending = false;
     ethRescueRequestAmount = 0;
     ethRescueRequestTime = 0;
 
     (bool success, ) = payable(treasuryWallet).call{value: amount}("");
-    require(success, "ETH transfer failed");
+    if (!(success)) revert ETHTransferFailed();
 
     emit ETHRescueExecuted(amount);
 }
 
 function cancelETHRescue() external onlyOwner {
-    require(ethRescuePending, "No ETH rescue pending");
+    if (!(ethRescuePending)) revert NoETHRescuePending();
     ethRescuePending = false;
     ethRescueRequestAmount = 0;
     ethRescueRequestTime = 0;
@@ -858,15 +924,15 @@ function cancelETHRescue() external onlyOwner {
 
 // --- ERC20 rescue: same 48h public timelock, plus the existing anti-rug guards ---
 function initiateERC20Rescue(address tokenAddress, uint256 amount) external onlyOwner {
-    require(!erc20RescuePending, "ERC20 rescue already pending");
-    require(tokenAddress != address(0), "Invalid token address");
-    require(tokenAddress != address(this), "Cannot rescue native project tokens");
-    require(tokenAddress != lpToken, "Cannot rescue locked LP tokens");
-    require(tokenAddress != _nativePair(), "Cannot rescue LP tokens");
-    require(amount > 0, "Amount must be greater than 0");
+    if (!(!erc20RescuePending)) revert ERC20RescueAlreadyPending();
+    if (!(tokenAddress != address(0))) revert InvalidTokenAddress();
+    if (!(tokenAddress != address(this))) revert CannotRescueNativeProjectTokens();
+    if (!(tokenAddress != lpToken)) revert CannotRescueLockedLPTokens();
+    if (!(tokenAddress != _nativePair())) revert CannotRescueLPTokens();
+    if (!(amount > 0)) revert AmountMustBeGreaterThan0();
 
     uint256 contractBalance = IERC20(tokenAddress).balanceOf(address(this));
-    require(amount <= contractBalance, "Exceeds token balance");
+    if (!(amount <= contractBalance)) revert ExceedsTokenBalance();
 
     erc20RescueToken = tokenAddress;
     erc20RescueAmount = amount;
@@ -877,21 +943,21 @@ function initiateERC20Rescue(address tokenAddress, uint256 amount) external only
 }
 
 function executeERC20Rescue() external onlyOwner nonReentrant {
-    require(erc20RescuePending, "No ERC20 rescue pending");
-    require(block.timestamp >= erc20RescueRequestTime + 48 hours, "Timelock not expired yet");
+    if (!(erc20RescuePending)) revert NoERC20RescuePending();
+    if (!(block.timestamp >= erc20RescueRequestTime + 48 hours)) revert TimelockNotExpiredYet();
 
     address tokenAddress = erc20RescueToken;
     // Re-check the anti-rug guards at execute time too, in case lpToken was set during the delay.
-    require(tokenAddress != address(this), "Cannot rescue native project tokens");
-    require(tokenAddress != lpToken, "Cannot rescue locked LP tokens");
-    require(tokenAddress != _nativePair(), "Cannot rescue LP tokens");
+    if (!(tokenAddress != address(this))) revert CannotRescueNativeProjectTokens();
+    if (!(tokenAddress != lpToken)) revert CannotRescueLockedLPTokens();
+    if (!(tokenAddress != _nativePair())) revert CannotRescueLPTokens();
 
     uint256 amount = erc20RescueAmount;
     uint256 contractBalance = IERC20(tokenAddress).balanceOf(address(this));
     if (amount > contractBalance) {
         amount = contractBalance;
     }
-    require(amount > 0, "Nothing to rescue");
+    if (!(amount > 0)) revert NothingToRescue();
 
     erc20RescuePending = false;
     erc20RescueAmount = 0;
@@ -899,13 +965,13 @@ function executeERC20Rescue() external onlyOwner nonReentrant {
     erc20RescueToken = address(0);
 
     bool success = IERC20(tokenAddress).transfer(treasuryWallet, amount);
-    require(success, "ERC20 transfer failed");
+    if (!(success)) revert ERC20TransferFailed();
 
     emit ERC20RescueExecuted(tokenAddress, amount);
 }
 
 function cancelERC20Rescue() external onlyOwner {
-    require(erc20RescuePending, "No ERC20 rescue pending");
+    if (!(erc20RescuePending)) revert NoERC20RescuePending();
     erc20RescuePending = false;
     erc20RescueAmount = 0;
     erc20RescueRequestTime = 0;
@@ -914,14 +980,14 @@ function cancelERC20Rescue() external onlyOwner {
 }
 // Allows updating the liquidity trigger threshold if price or volume changes
     function setMinTokensBeforeLiquidity(uint256 newMinTokens) external onlyOwner {
-        require(newMinTokens > 0, "Threshold must be greater than 0");
+        if (!(newMinTokens > 0)) revert ThresholdMustBeGreaterThan0();
         minTokensBeforeLiquidity = newMinTokens;
     }
 
     // Configures which pair the TWAP oracle reads from. Must be called before TWAP
     // protection becomes active. Resets twapInitialized so the oracle re-bootstraps cleanly.
     function setTwapPair(address pair) external onlyOwner {
-    require(pair != address(0), "Zero address protection");
+    if (!(pair != address(0))) revert ZeroAddressProtection();
     twapPair = pair;
     twapTokenIsToken0 = IUniswapV2Pair(pair).token0() == address(this);
     twapInitialized = false;
@@ -930,7 +996,7 @@ function cancelERC20Rescue() external onlyOwner {
 
     // Configures the minimum time window required before a TWAP snapshot is trusted.
     function setTwapMinInterval(uint256 newInterval) external onlyOwner {
-        require(newInterval >= 5 minutes, "Interval too short to resist manipulation");
+        if (!(newInterval >= 5 minutes)) revert IntervalTooShortToResistManipulation();
         twapMinInterval = newInterval;
     }
 
@@ -1018,7 +1084,7 @@ function _updateTwapObservation() internal {
     // must never revert the user's own transfer. Guarded so only the contract itself
     // can call it; nobody else can trigger a swap directly from outside.
     function _autoAddLiquidity(uint256 tokensToSwap) external lockTheSwap {
-    require(msg.sender == address(this), "Internal only");
+    if (!(msg.sender == address(this))) revert InternalOnly();
     uint256 halfToEth = tokensToSwap / 2;
     uint256 halfToLiquidity = tokensToSwap - halfToEth;
 
@@ -1030,15 +1096,15 @@ function _updateTwapObservation() internal {
 
     
     uint256 twapEthOut = _getTwapEthOut(halfToEth);
-require(twapEthOut > 0, "TWAP not ready"); // should be unreachable given the _isTwapReady() gate in _transfer, but fail closed rather than silently swap unprotected
+if (!(twapEthOut > 0)) revert TWAPNotReady(); // should be unreachable given the _isTwapReady() gate in _transfer, but fail closed rather than silently swap unprotected
 
 uint256 spotPriceQ112 = _getSpotPriceQ112();
-require(spotPriceQ112 > 0, "Spot price unavailable");
+if (!(spotPriceQ112 > 0)) revert SpotPriceUnavailable();
 uint256 priceDiff = lastValidTwapPrice > spotPriceQ112
     ? lastValidTwapPrice - spotPriceQ112
     : spotPriceQ112 - lastValidTwapPrice;
 uint256 divergenceBPS = (priceDiff * 10000) / spotPriceQ112;
-require(divergenceBPS <= maxTwapDivergenceBPS, "TWAP-spot divergence too high");
+if (!(divergenceBPS <= maxTwapDivergenceBPS)) revert TWAPSpotDivergenceTooHigh();
 
 uint256 minEthFromSwap = (twapEthOut * liquiditySlippageBPS) / 10000;
 
@@ -1086,13 +1152,13 @@ address public lpToken;
     }
 
     function lockLiquidity(address _lpToken) external onlyOwner {
-        require(!lpLocked, "Already locked");
-        require(_lpToken != address(0), "Zero address");
-        require(lpToken == address(0), "LP lock is one-time only");
-        require(_lpToken == _nativePair(), "Not the native LP pair");
+        if (!(!lpLocked)) revert AlreadyLocked();
+        if (!(_lpToken != address(0))) revert ZeroAddress();
+        if (!(lpToken == address(0))) revert LPLockIsOneTimeOnly();
+        if (!(_lpToken == _nativePair())) revert NotTheNativeLPPair();
 
         uint256 balance = IERC20(_lpToken).balanceOf(address(this));
-        require(balance > 0, "No LP tokens to lock");
+        if (!(balance > 0)) revert NoLPTokensToLock();
 
         lpToken = _lpToken;
         lpLockedAmount = balance;
@@ -1103,14 +1169,14 @@ address public lpToken;
     }
 
     function withdrawLP() external onlyOwner {
-        require(lpLocked, "No lock active");
-        require(block.timestamp >= lpUnlockTime, "Still locked");
+        if (!(lpLocked)) revert NoLockActive();
+        if (!(block.timestamp >= lpUnlockTime)) revert StillLocked();
 
         uint256 amount = lpLockedAmount;
         lpLockedAmount = 0;
         lpLocked = false;
 
-        require(IERC20(lpToken).transfer(owner, amount), "LP transfer failed");
+        if (!(IERC20(lpToken).transfer(owner, amount))) revert LPTransferFailed();
         emit LPWithdrawn(amount);
     }
 
@@ -1118,8 +1184,8 @@ address public lpToken;
     function approve(address s, uint256 a) external returns (bool) { _approve(msg.sender, s, a); return true; }
     function _approve(address o, address s, uint256 a) internal { allowance[o][s] = a; emit Approval(o, s, a); }
     function setFees(uint256 _treasuryBPS, uint256 _liquidityBPS, uint256 _unstakeBPS) external onlyOwner {
-    require(_treasuryBPS + _liquidityBPS <= 200, "Transfer fees exceed maximum cap of 2%");
-    require(_unstakeBPS <= 300, "Unstake fee exceeds maximum cap of 3%");
+    if (!(_treasuryBPS + _liquidityBPS <= 200)) revert TransferFeesExceedMaximumCapOf2();
+    if (!(_unstakeBPS <= 300)) revert UnstakeFeeExceedsMaximumCapOf3();
     
     treasuryTaxBPS = _treasuryBPS;
     liquidityTaxBPS = _liquidityBPS;
@@ -1128,51 +1194,9 @@ address public lpToken;
     emit FeesUpdated(_treasuryBPS, _liquidityBPS, _unstakeBPS);
 }
     function setExchangePair(address pair, bool status) external onlyOwner {
-    require(pair != address(0), "Zero address protection");
+    if (!(pair != address(0))) revert ZeroAddressProtection();
     isExchangePair[pair] = status;
     emit ExchangePairStatusUpdated(pair, status);
-}
-
-
-// Returns current rescue status so investors can monitor on-chain
-function getRescueStatus() external view returns (
-    bool pending,
-    uint256 amount,
-    uint256 executeAfter
-) {
-    return (
-        rescuePending,
-        rescueRequestAmount,
-        rescuePending ? rescueRequestTime + 48 hours : 0
-    );
-}
-
-// Returns current ETH rescue status so investors can monitor on-chain
-function getETHRescueStatus() external view returns (
-    bool pending,
-    uint256 amount,
-    uint256 executeAfter
-) {
-    return (
-        ethRescuePending,
-        ethRescueRequestAmount,
-        ethRescuePending ? ethRescueRequestTime + 48 hours : 0
-    );
-}
-
-// Returns current ERC20 rescue status so investors can monitor on-chain
-function getERC20RescueStatus() external view returns (
-    bool pending,
-    address token,
-    uint256 amount,
-    uint256 executeAfter
-) {
-    return (
-        erc20RescuePending,
-        erc20RescueToken,
-        erc20RescueAmount,
-        erc20RescuePending ? erc20RescueRequestTime + 48 hours : 0
-    );
 }
 
 

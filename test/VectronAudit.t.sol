@@ -36,13 +36,13 @@ contract VectronAuditTest is Test {
     }
 
     function test_NativeTokenCannotBeLockedAsLP() public {
-        vm.expectRevert("Not the native LP pair");
+        vm.expectRevert(bytes4(keccak256("NotTheNativeLPPair()")));
         token.lockLiquidity(address(token));
     }
 
     function test_DustTokenCannotBeLockedAsLP() public {
         dust.mint(address(token), 1 ether);
-        vm.expectRevert("Not the native LP pair");
+        vm.expectRevert(bytes4(keccak256("NotTheNativeLPPair()")));
         token.lockLiquidity(address(dust));
     }
 
@@ -52,13 +52,13 @@ contract VectronAuditTest is Test {
         vm.warp(block.timestamp + 150 days);
         token.withdrawLP();
         realLp.mint(address(token), 1 ether);
-        vm.expectRevert("LP lock is one-time only");
+        vm.expectRevert(bytes4(keccak256("LPLockIsOneTimeOnly()")));
         token.lockLiquidity(address(realLp));
     }
 
     function test_RealPairCannotBeRescuedEvenIfNeverLocked() public {
         realLp.mint(address(token), 1 ether);
-        vm.expectRevert("Cannot rescue LP tokens");
+        vm.expectRevert(bytes4(keccak256("CannotRescueLPTokens()")));
         token.initiateERC20Rescue(address(realLp), 1 ether);
     }
 }

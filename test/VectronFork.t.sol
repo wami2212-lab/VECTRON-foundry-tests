@@ -98,7 +98,7 @@ contract VectronForkTest is Test {
         assertGt(lpBal, 0, "test contract should hold the seeded LP");
         IPancakePairFork(pair).transfer(address(token), lpBal);
 
-        vm.expectRevert("Not the native LP pair");
+        vm.expectRevert(bytes4(keccak256("NotTheNativeLPPair()")));
         token.lockLiquidity(wbnb); // any other token must be refused
 
         token.lockLiquidity(pair); // the real pair from the real factory must be accepted
