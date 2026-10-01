@@ -225,4 +225,23 @@ contract VectronForkTest is Test {
         vm.expectRevert(bytes4(keccak256("CannotRescueLockedLPTokens()")));
         token.initiateERC20Rescue(pair, remainingLP);
     }
+
+        function test_AutoLiquidityLeftoverNeverBreaksSolvency() public {
+        _sell(200_000 ether);
+        vm.warp(block.timestamp + 6 minutes);
+        IPancakePairFork(pair).sync();
+        _sell(200_000 ether);
+
+        uint256 queueBefore = token.liquidityTokensCollected();
+        uint256 lpBefore = IPancakePairFork(pair).balanceOf(address(token));
+        _sell(1_000 ether);
+        assertGt(IPancakePairFork(pair).balanceOf(address(token)), lpBefore, "auto-liquidity did not run");
+
+        uint256 liabilities = token.totalTokensStaked() + token.vestingPoolSize()
+            + token.totalRewardsAvailable() + token.liquidityTokensCollected();
+        uint256 bal = token.balanceOf(address(token));
+        assertGe(bal, liabilities, "contract holds less than it owes");
+        emit log_named_uint("queue consumed (wei)", queueBefore);
+        emit log_named_uint("leftover tokens in contract (wei)", bal - liabilities);
+    }
 }
