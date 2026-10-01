@@ -133,6 +133,26 @@ contract VectronForkTest is Test {
         assertLt(token.liquidityTokensCollected(), queueBefore, "queue was not consumed");
     }
 
+        function test_LargeSellTriggersAutoLiquidityOnRealRouter() public {
+        token.transfer(seller, 6_000_000 ether); // owner is fee-exempt; seller can now cover a 10M sell
+
+        _sell(200_000 ether);
+        vm.warp(block.timestamp + 6 minutes);
+        IPancakePairFork(pair).sync();
+        _sell(200_000 ether);
+
+        uint256 queueBefore = token.liquidityTokensCollected();
+        assertGe(queueBefore, token.minTokensBeforeLiquidity(), "queue should be above threshold");
+        uint256 lpBefore = IPancakePairFork(pair).balanceOf(address(token));
+        uint256 bnbBefore = seller.balance;
+
+        _sell(10_000_000 ether);
+
+        assertGt(seller.balance, bnbBefore, "seller was not paid BNB");
+        assertGt(IPancakePairFork(pair).balanceOf(address(token)), lpBefore, "auto-liquidity did not add LP");
+        assertEq(token.liquidityTokensCollected(), 50_000 ether, "queue should hold only the large sell's own share");
+    }
+
         function test_LockLiquidityAcceptsRealPairOnRealFactory() public {
         uint256 lpBal = IPancakePairFork(pair).balanceOf(address(this));
         assertGt(lpBal, 0, "test contract should hold the seeded LP");
