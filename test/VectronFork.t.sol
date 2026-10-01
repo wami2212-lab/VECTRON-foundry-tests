@@ -190,4 +190,39 @@ contract VectronForkTest is Test {
         assertEq(token.lpToken(), pair);
         assertTrue(token.lpLocked());
     }
+
+        function test_PostLockAutoLiquidityLPBecomesInaccessible() public {
+        uint256 initialLP = IPancakePairFork(pair).balanceOf(address(this));
+        assertGt(initialLP, 0, "No initial LP");
+        IPancakePairFork(pair).transfer(address(token), initialLP);
+        token.lockLiquidity(pair);
+
+        uint256 lockedAmount = token.lpLockedAmount();
+        assertEq(lockedAmount, initialLP);
+
+        // Build the queue and trigger auto-liquidity AFTER the lock exists.
+        _sell(200_000 ether);
+        vm.warp(block.timestamp + 6 minutes);
+        IPancakePairFork(pair).sync();
+        _sell(200_000 ether);
+        assertGe(token.liquidityTokensCollected(), token.minTokensBeforeLiquidity(), "queue below threshold");
+        _sell(1_000 ether);
+
+        uint256 lpInContract = IPancakePairFork(pair).balanceOf(address(token));
+        assertGt(lpInContract, lockedAmount, "No additional LP was created");
+        assertEq(token.lpLockedAmount(), lockedAmount, "Locked amount unexpectedly changed");
+
+        vm.warp(block.timestamp + 150 days);
+        uint256 ownerLPBefore = IPancakePairFork(pair).balanceOf(address(this));
+        token.withdrawLP();
+        uint256 withdrawn = IPancakePairFork(pair).balanceOf(address(this)) - ownerLPBefore;
+
+        assertEq(withdrawn, lockedAmount, "Unexpected LP withdrawal amount");
+                uint256 remainingLP = IPancakePairFork(pair).balanceOf(address(token));
+        assertGt(remainingLP, 0, "No LP remains");
+        assertFalse(token.lpLocked());
+
+        vm.expectRevert(bytes4(keccak256("CannotRescueLockedLPTokens()")));
+        token.initiateERC20Rescue(pair, remainingLP);
+    }
 }
