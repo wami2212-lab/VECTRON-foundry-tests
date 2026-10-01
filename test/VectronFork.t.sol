@@ -24,6 +24,10 @@ interface IPancakePairFork {
     function token0() external view returns (address);
 }
 
+interface IPancakePairCumulative {
+    function price0CumulativeLast() external view returns (uint256);
+    function price1CumulativeLast() external view returns (uint256);
+}
 contract VectronForkTest is Test {
     address constant PANCAKE_ROUTER = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
 
@@ -151,6 +155,27 @@ contract VectronForkTest is Test {
         assertGt(seller.balance, bnbBefore, "seller was not paid BNB");
         assertGt(IPancakePairFork(pair).balanceOf(address(token)), lpBefore, "auto-liquidity did not add LP");
         assertEq(token.liquidityTokensCollected(), 50_000 ether, "queue should hold only the large sell's own share");
+    }
+
+        function _pairCumulative() internal view returns (uint256) {
+        return token.twapTokenIsToken0()
+            ? IPancakePairCumulative(pair).price0CumulativeLast()
+            : IPancakePairCumulative(pair).price1CumulativeLast();
+    }
+
+    function test_TwapSnapshotMatchesPairCumulativeExactly() public {
+        vm.warp(block.timestamp + 1 hours);
+        _sell(10_000 ether);
+        uint256 cum1 = _pairCumulative();
+        uint256 t1 = block.timestamp;
+        assertEq(token.twapPriceCumulativeLast(), cum1, "first snapshot differs from pair cumulative");
+        assertEq(token.twapTimestampLast(), uint32(t1), "first snapshot timestamp differs");
+
+        vm.warp(block.timestamp + 10 minutes);
+        _sell(10_000 ether);
+        uint256 cum2 = _pairCumulative();
+        assertEq(token.twapPriceCumulativeLast(), cum2, "second snapshot differs from pair cumulative");
+        assertEq(token.lastValidTwapPrice(), (cum2 - cum1) / 10 minutes, "TWAP is not the exact average over the interval");
     }
 
         function test_LockLiquidityAcceptsRealPairOnRealFactory() public {
