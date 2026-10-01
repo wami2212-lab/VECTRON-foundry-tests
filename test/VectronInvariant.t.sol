@@ -2,7 +2,7 @@
 pragma solidity ^0.8.19;
 
 import {Test} from "forge-std/Test.sol";
-import {VECTRON} from "../src/Vectron.sol";
+import {VECTRON, NothingToClaimYet} from "../src/Vectron.sol";
 import {MockRouter} from "./mocks/MockRouter.sol";
 import {MockPair} from "./mocks/MockPair.sol";
 import {MaliciousReentrant} from "./mocks/MaliciousReentrant.sol";
@@ -19,6 +19,11 @@ contract Handler is Test {
     bool public claimFailed;
     bool public sellFailed;
         uint256 public exitsDone;
+            bool public vestClaimFailed;
+    uint256 public vestClaimsDone;
+        bool public burnFailed;
+    bool public walletFailed;
+        bool public adminFailed;
 
     constructor(VECTRON _token, address _pair, MockPair _mockPair, address[] memory _actors) {
         token = _token;
@@ -28,6 +33,7 @@ contract Handler is Test {
     }
 
     function stake(uint256 a, uint256 tierSeed, uint256 amtSeed) external {
+                if (token.paused()) return;
         address actor = actors[a % actors.length];
         uint256 bal = token.balanceOf(actor);
         if (bal == 0 || token.getStakeCount(actor) >= 25) return;
@@ -38,6 +44,7 @@ contract Handler is Test {
     }
 
     function unstake(uint256 a, uint256 i) external {
+                if (token.paused()) return;
         address actor = actors[a % actors.length];
         uint256 n = token.getStakeCount(actor);
         if (n == 0) return;
@@ -61,10 +68,62 @@ contract Handler is Test {
     }
 
     function claim(uint256 a) external {
+                if (token.paused()) return;
         address actor = actors[a % actors.length];
         if (token.earned(actor) == 0) return;
         vm.prank(actor);
         try token.claim() {} catch { claimFailed = true; }
+    }
+
+        function claimVested(uint256 a) external {
+        address actor = actors[a % actors.length];
+        vm.prank(actor);
+        try token.claimMyVestedTokens() {
+            vestClaimsDone++;
+        } catch (bytes memory reason) {
+            if (bytes4(reason) != NothingToClaimYet.selector) vestClaimFailed = true;
+        }
+    }
+
+        function burn(uint256 a, uint256 amtSeed) external {
+        address actor = actors[a % actors.length];
+        uint256 bal = token.balanceOf(actor);
+        if (bal == 0) return;
+        uint256 amount = bound(amtSeed, 1, bal / 10 + 1);
+        vm.prank(actor);
+        try token.burn(amount) {} catch { burnFailed = true; }
+    }
+
+    function walletTransfer(uint256 a, uint256 b, uint256 amtSeed) external {
+        address from = actors[a % actors.length];
+        address to = actors[b % actors.length];
+        if (from == to) return;
+        uint256 bal = token.balanceOf(from);
+        if (bal == 0) return;
+        uint256 amount = bound(amtSeed, 1, bal);
+        vm.prank(from);
+        try token.transfer(to, amount) {} catch { walletFailed = true; }
+    }
+
+        function adminSetPause(uint256 seed) external {
+        address o = token.owner();
+        vm.prank(o);
+        try token.setPaused(seed % 4 == 0) {} catch { adminFailed = true; }
+    }
+
+    function adminSetFees(uint256 tSeed, uint256 lSeed, uint256 uSeed) external {
+        uint256 t = bound(tSeed, 0, 200);
+        uint256 l = bound(lSeed, 0, 200 - t);
+        uint256 u = bound(uSeed, 0, 300);
+        address o = token.owner();
+        vm.prank(o);
+        try token.setFees(t, l, u) {} catch { adminFailed = true; }
+    }
+
+    function adminSetMinTokens(uint256 seed) external {
+        address o = token.owner();
+        vm.prank(o);
+        try token.setMinTokensBeforeLiquidity(bound(seed, 100_000 ether, 3_000_000 ether)) {} catch { adminFailed = true; }
     }
 
     function sell(uint256 a, uint256 amtSeed) external {
@@ -124,6 +183,8 @@ contract VectronInvariant is Test {
         token.setExchangePair(address(pair), true);
         token.setTwapPair(address(pair));
         token.setMinTokensBeforeLiquidity(500_000 ether);
+                token.setSeedAllocation(address(uint160(0xA000)), 5_000_000 ether);
+
         token.startSystem();
 
         vm.deal(address(router), 1000 ether);
@@ -164,7 +225,7 @@ contract VectronInvariant is Test {
     function invariant_exactContractBalance() public view {
         assertEq(
             token.balanceOf(address(token)),
-            token.totalTokensStaked() + token.totalRewardsAvailable() + token.liquidityTokensCollected()
+                        token.totalTokensStaked() + token.totalRewardsAvailable() + token.liquidityTokensCollected() + token.vestingPoolSize()
         );
     }
 
@@ -212,5 +273,25 @@ contract VectronInvariant is Test {
     // contract activity — not just the isolated one-shot scenario.
     function invariant_reentrancyNeverSucceedsMidSwap() public view {
         assertLe(router.maxDepthSeen(), 1, "swap function was reentered - inSwap gate failed under load");
+    }
+
+        function invariant_vestingClaimNeverWronglyBlocked() public view {
+        assertFalse(handler.vestClaimFailed(), "vested claim reverted unexpectedly");
+    }
+
+    function invariant_noOverclaim() public view {
+        for (uint256 i = 0; i < actors.length; i++) {
+            assertLe(token.userClaimed(actors[i]), token.getTotalAllocation(actors[i]));
+        }
+        assertLe(token.userClaimed(actors[0]), 5_000_000 ether);
+    }
+
+            function invariant_burnAndWalletTransfersNeverBlocked() public view {
+        assertFalse(handler.burnFailed(), "burn reverted");
+        assertFalse(handler.walletFailed(), "wallet transfer reverted");
+    }
+
+    function invariant_adminActionsNeverBlocked() public view {
+        assertFalse(handler.adminFailed(), "owner admin action reverted");
     }
 }
