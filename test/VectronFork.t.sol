@@ -244,4 +244,32 @@ contract VectronForkTest is Test {
         emit log_named_uint("queue consumed (wei)", queueBefore);
         emit log_named_uint("leftover tokens in contract (wei)", bal - liabilities);
     }
+
+        function test_LeftoverVCTRescuableOnlyAboveLiabilities() public {
+        _sell(200_000 ether);
+        vm.warp(block.timestamp + 6 minutes);
+        IPancakePairFork(pair).sync();
+        _sell(200_000 ether);
+        uint256 lpBefore = IPancakePairFork(pair).balanceOf(address(token));
+        _sell(1_000 ether);
+        assertGt(IPancakePairFork(pair).balanceOf(address(token)), lpBefore, "auto-liquidity did not run");
+
+        uint256 liabilities = token.totalTokensStaked() + token.vestingPoolSize()
+            + token.totalRewardsAvailable() + token.liquidityTokensCollected();
+        uint256 free = token.balanceOf(address(token)) - liabilities;
+        assertGt(free, 0, "no leftover to rescue");
+
+        vm.expectRevert(bytes4(keccak256("ExceedsSafeUnallocatedBalance()")));
+        token.initiateRescue(free + 1);
+
+        token.initiateRescue(free);
+        vm.expectRevert(bytes4(keccak256("TimelockNotExpiredYet()")));
+        token.executeRescue();
+
+        vm.warp(block.timestamp + 48 hours);
+        uint256 treasuryBefore = token.balanceOf(treasury);
+        token.executeRescue();
+        assertEq(token.balanceOf(treasury) - treasuryBefore, free, "treasury did not receive the leftover");
+        assertEq(token.balanceOf(address(token)), liabilities, "rescue must leave exactly the liabilities");
+    }
 }
