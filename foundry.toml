@@ -14,4 +14,4 @@ evm_version = "paris"
 runs = 2000
 depth = 500
 [fmt]
-ignore = ["src/Vectron.sol"]
+ignore = ["src/Vectron.sol", "test/**/*.sol"]
