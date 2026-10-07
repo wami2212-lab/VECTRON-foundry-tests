@@ -1,5 +1,7 @@
 # VECTRON Foundry tests
 
+**VECTRON Open Review.** Try to break the contract: [open the discussions](https://github.com/wami2212-lab/VECTRON-foundry-tests/discussions) and post findings with the function, the commit and a failing test. Valid findings are fixed in the open, with credit in the repo and the whitepaper.
+
 Foundry test suite for the VECTRON (VCT) contract on BNB Smart Chain.
 
 - Deployed contract: 0x21b2Fd27294912555b57028CC8cf69C60851D1e4 (source verified on BscScan)
